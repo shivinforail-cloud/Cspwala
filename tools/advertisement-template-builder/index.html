@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="mr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#092d42">
+  <title>Advertisement Template Builder | CSPWALA.IN</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <link rel="stylesheet" href="../assets/poster-builder.css">
+</head>
+<body>
+<header class="site-header"><div class="header-inner"><a class="brand" href="../"><span class="brand-mark">C</span><span><b>CSPWALA.IN</b><small>ADVERTISEMENT TEMPLATE BUILDER</small></span></a><nav class="desktop-nav"><a href="../">Tools</a><a href="#posterLibrary">Poster Library</a><a href="#builder">Builder</a></nav><a class="btn btn-primary" href="#builder">Template तयार करा</a></div></header>
+<main>
+<section class="builder-hero"><div class="container"><span class="eyebrow">USER POSTER MODULE</span><h1>Advertisement Template Builder</h1><p class="lead">Header, Footer आणि Call-to-Action आपल्या व्यवसायानुसार तयार करा. स्वतःचा poster upload करा किंवा admin-created Poster Library मधून निवडा.</p><div class="source-actions"><button class="source-card active" data-source="library"><span>🖼️</span><b>Poster Library मधून निवडा</b><small>Admin ने publish केलेले advertisement posters</small></button><button class="source-card" data-source="upload"><span>⬆️</span><b>स्वतःचा Poster Upload करा</b><small>JPG, PNG किंवा WebP poster वापरा</small></button></div></div></section>
+
+<section id="posterLibrary" class="section builder-section"><div class="container"><div class="section-head"><div><span class="section-kicker">POSTER LIBRARY</span><h2>Admin-created Posters</h2><p class="muted">Poster निवडल्यानंतर खालील builder मध्ये header-footer customize करा.</p></div></div><div id="libraryGrid" class="poster-library-grid"></div></div></section>
+
+<section id="builder" class="section builder-section"><div class="container builder-grid">
+  <aside class="builder-sidebar">
+    <div class="builder-step active"><span>1</span><b>Poster Source</b></div><div class="builder-step"><span>2</span><b>Business Details</b></div><div class="builder-step"><span>3</span><b>Services</b></div><div class="builder-step"><span>4</span><b>Dialogue & CTA</b></div><div class="builder-step"><span>5</span><b>Style & Layout</b></div><div class="builder-step"><span>6</span><b>Preview & Download</b></div>
+    <div class="saved-panel"><div class="saved-head"><b>Saved Templates</b><span id="savedCount">0/5</span></div><div id="savedTemplates"></div></div>
+  </aside>
+
+  <section class="builder-controls">
+    <div class="builder-card" id="sourcePanel"><h3>1. Poster Source</h3><div id="selectedPosterInfo" class="selected-poster-info">Poster Library मधून poster निवडा किंवा upload करा.</div><label class="upload-poster"><input id="posterUpload" type="file" accept="image/jpeg,image/png,image/webp"><span>⬆️ Poster Upload करा</span><small>Max 15 MB</small></label></div>
+
+    <div class="builder-card"><h3>2. व्यवसायाची माहिती</h3><div class="form-grid"><div class="field"><label>व्यवसायाचे नाव</label><input id="businessName" value="शिव इन्फोटेक ऑनलाईन सर्व्हिसेस"></div><div class="field"><label>मालक / संचालक</label><input id="ownerName" value="शुभम भैया जयस्वाल"></div><div class="field"><label>Mobile Number</label><input id="mobile"></div><div class="field"><label>WhatsApp Number</label><input id="whatsapp"></div><div class="field full"><label>संपूर्ण पत्ता</label><textarea id="address">मार्केट लाइन, काळी (दौ.)</textarea></div><div class="field"><label>Website</label><input id="website" value="cspwala.in"></div><div class="field"><label>Email</label><input id="email" type="email"></div><div class="field"><label>Logo</label><input id="logoUpload" type="file" accept="image/*"></div><div class="field"><label>QR Code</label><input id="qrUpload" type="file" accept="image/*"></div><div class="field"><label>Watermark</label><select id="watermark"><option value="on" selected>CSPWALA.IN On</option><option value="off">Off (admin permission)</option></select></div></div></div>
+
+    <div class="builder-card"><h3>3. सेवा निवडा</h3><div class="selection-tabs"><button class="tab active" data-zone="header">Header Services <small>Max 6</small></button><button class="tab" data-zone="footer">Footer Ribbon <small>Max 7</small></button><button class="tab" data-zone="badge">Big Badges <small>Max 2</small></button></div><div id="serviceGroups" class="service-groups"></div><div class="field"><label>Custom Service</label><div class="inline-field"><input id="customService" placeholder="उदा. Passport Appointment"><button id="addCustomService" class="btn btn-secondary" type="button">Add</button></div></div><div id="selectedServices" class="selected-services"></div></div>
+
+    <div class="builder-card"><h3>4. Dialogue, Action आणि Flow</h3><div class="form-grid"><div class="field full"><label>Dialogue</label><select id="dialogue"></select></div><div class="field"><label>Action Button</label><select id="action"></select></div><div class="field"><label>Action Flow</label><select id="flow"><option value="none">Flow नको</option><option value="three">3-Step Flow</option><option value="four">4-Step Flow</option><option value="five">5-Step Flow</option><option value="farmer">Farmer Flow</option><option value="certificate">Certificate Flow</option><option value="education">Education Flow</option></select></div></div></div>
+
+    <div class="builder-card"><h3>5. Template Style आणि Layout</h3><div id="styleGrid" class="style-grid"></div><div class="form-grid"><div class="field"><label>Header Layout</label><select id="headerLayout"></select></div><div class="field"><label>Footer Layout</label><select id="footerLayout"></select></div><div class="field"><label>Header Height</label><input id="headerHeight" type="range" min="120" max="360" value="220"></div><div class="field"><label>Footer Height</label><input id="footerHeight" type="range" min="150" max="420" value="250"></div><div class="field"><label>Font Size</label><input id="fontScale" type="range" min="70" max="135" value="100"></div><div class="field"><label>Rounded Corners</label><input id="radius" type="range" min="0" max="50" value="24"></div><div class="field"><label>Shadow Level</label><input id="shadow" type="range" min="0" max="40" value="18"></div><div class="field"><label>Watermark Opacity</label><input id="watermarkOpacity" type="range" min="3" max="18" value="7"></div></div></div>
+  </section>
+
+  <aside class="preview-column"><div class="preview-toolbar"><select id="outputSize"><option value="1080,1350">WhatsApp Poster — 1080×1350</option><option value="1080,1920">Story / Status — 1080×1920</option><option value="1080,1080">Square Post — 1080×1080</option><option value="2480,3508">A4 Print — 2480×3508</option></select><button id="refreshPreview" class="btn btn-secondary">Refresh</button></div><div class="poster-canvas-wrap"><canvas id="posterCanvas" width="1080" height="1350"></canvas></div><div class="preview-actions"><button id="saveTemplate" class="btn btn-secondary">Save Template</button><button id="downloadFull" class="btn btn-primary">Complete Poster</button><button id="downloadHeader" class="btn btn-secondary">Header Only</button><button id="downloadFooter" class="btn btn-secondary">Footer Only</button></div><p id="builderStatus" class="status"></p></aside>
+</div></section>
+</main>
+<footer class="footer"><div class="container footer-inner"><strong>CSPWALA.IN Advertisement Builder</strong><span>User module: upload poster or select admin-published library poster</span></div></footer>
+<script type="module" src="../assets/poster-builder.js"></script>
+</body></html>
