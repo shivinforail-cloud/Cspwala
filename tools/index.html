@@ -3,8 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="CSPWALA Tools मध्ये image compress, resize आणि convert करण्यासाठी सुरक्षित browser-based डिजिटल टूल्स वापरा.">
-  <title>CSPWALA Tools – सेवा केंद्रासाठी डिजिटल टूल्स</title>
+  <meta name="theme-color" content="#092d42">
+  <meta name="description" content="CSPWALA Tools मध्ये image, PDF, ID card, document, poster आणि सेवा केंद्रासाठी उपयुक्त browser-based tools वापरा.">
+  <title>CSPWALA Tools – सेवा केंद्रासाठी सर्व डिजिटल टूल्स</title>
   <link rel="stylesheet" href="./assets/styles.css">
 </head>
 <body>
@@ -13,12 +14,12 @@
     <div class="header-inner">
       <a class="brand" href="https://cspwala.in" aria-label="CSPWALA.IN Home">
         <span class="brand-mark">C</span>
-        <span>CSPWALA.IN<small>Digital Tools</small></span>
+        <span><b>CSPWALA.IN</b><small>FORUM • TOOLS • COMMUNITY</small></span>
       </a>
-      <div class="header-actions">
-        <a class="btn btn-secondary hide-mobile" href="https://cspwala.in">मुख्य वेबसाइट</a>
-        <a class="btn btn-primary" href="#all-tools">सर्व टूल्स</a>
-      </div>
+      <nav class="desktop-nav" aria-label="Primary">
+        <a href="https://cspwala.in">Home</a><a href="#categories">Categories</a><a href="#all-tools">All Tools</a>
+      </nav>
+      <div class="header-actions"><a class="btn btn-primary" href="#all-tools">डिजिटल टूल्स</a></div>
     </div>
   </header>
 
@@ -26,45 +27,38 @@
     <section class="hero">
       <div class="container hero-grid">
         <div>
-          <span class="eyebrow">⚡ Browser मध्येच सुरक्षित processing</span>
-          <h1>आपल्या सेवा केंद्रासाठी आवश्यक डिजिटल टूल्स</h1>
-          <p class="lead">फोटो compress, resize आणि format convert करण्यासाठी वेगवान, mobile-friendly आणि privacy-focused टूल्स. फाइल server वर upload न करता आपल्या device मध्येच process होते.</p>
+          <span class="eyebrow">⚡ CSPWALA सेवा केंद्र Productivity Suite</span>
+          <h1>एकाच ठिकाणी सर्व <span class="gradient-text">Digital Tools</span></h1>
+          <p class="lead">Image, PDF, ID Card, Document, Marriage Card, Poster आणि PMFBY tools—मोबाईल व कॉम्प्युटरवर सोपे, जलद आणि privacy-first.</p>
           <div class="search-panel" role="search">
-            <input id="toolSearch" type="search" autocomplete="off" placeholder="टूल शोधा: compress, resize, PDF..." aria-label="Search tools">
-            <button id="searchButton" class="btn btn-accent" type="button">🔎 शोधा</button>
+            <span aria-hidden="true">⌕</span><input id="toolSearch" type="search" autocomplete="off" placeholder="टूल शोधा: image compress, Aadhaar crop, PDF merge..." aria-label="Search tools"><button id="searchButton" class="btn btn-accent" type="button">शोधा</button>
           </div>
+          <div class="trust-row"><span>🔒 Local processing</span><span>📱 Mobile friendly</span><span>🇮🇳 Marathi ready</span></div>
         </div>
-        <div class="hero-visual" aria-hidden="true">
-          <div class="visual-card"><span>🗜️</span><strong>Image Compressor</strong><small class="muted">20 KB ते custom size</small></div>
-          <div class="visual-row">
-            <div class="visual-card"><span>📐</span><strong>Resize</strong></div>
-            <div class="visual-card"><span>🔁</span><strong>Convert</strong></div>
-          </div>
-          <div class="visual-card"><span>🔒</span><strong>Local Processing</strong><small class="muted">आपल्या फाइल्स device बाहेर जात नाहीत</small></div>
+        <div class="hero-dashboard" aria-hidden="true">
+          <div class="dash-head"><span>CSPWALA Tools</span><span class="online-dot">● Live</span></div>
+          <div class="dash-stats"><div><strong>40</strong><small>Tools</small></div><div><strong>8</strong><small>Categories</small></div><div><strong>Local</strong><small>Privacy</small></div></div>
+          <div class="dash-list"><div>🗜️ Image Compressor <span>Open →</span></div><div>🧩 Merge PDF <span>Open →</span></div><div>🪪 Aadhaar Cropper <span>Open →</span></div><div>🌾 PMFBY Calculator <span>Open →</span></div></div>
         </div>
       </div>
+    </section>
+
+    <section id="categories" class="section section-tight">
+      <div class="container"><div class="section-head"><div><span class="section-kicker">CATEGORIES</span><h2>कामानुसार टूल निवडा</h2></div></div><div id="categoryGrid" class="category-grid"></div></div>
     </section>
 
     <section id="all-tools" class="section">
       <div class="container">
-        <div class="section-head">
-          <div>
-            <h2>सर्व डिजिटल टूल्स</h2>
-            <p id="resultSummary" class="muted" aria-live="polite"></p>
-          </div>
-        </div>
+        <div class="section-head"><div><span class="section-kicker">ALL TOOLS</span><h2>सर्व डिजिटल टूल्स</h2><p id="resultSummary" class="muted" aria-live="polite"></p></div></div>
         <div id="categoryChips" class="chip-row" aria-label="Tool categories"></div>
         <div id="toolGrid" class="tool-grid"></div>
       </div>
     </section>
+
+    <section class="section privacy-section"><div class="container privacy-grid"><div><span class="section-kicker">PRIVACY FIRST</span><h2>ग्राहकांची फाइल शक्यतो device मध्येच</h2><p class="lead">Image, ID card आणि बहुतेक PDF processing browser मध्ये होते. Tool workspace प्रत्येक feature साठी processing type स्पष्ट दाखवतो. Server verification आवश्यक असलेल्या feature बद्दल चुकीचा “100% local” दावा केला जात नाही.</p></div><div class="privacy-card"><div>✓ फाइल आपोआप cloud मध्ये save नाही</div><div>✓ Aadhaar/PAN filename analytics मध्ये नाही</div><div>✓ काम पूर्ण झाल्यावर browser memory clear</div><div>✓ Original document वापरकर्त्याकडेच राहतो</div></div></div></section>
   </main>
 
-  <footer class="footer">
-    <div class="container footer-inner">
-      <strong>CSPWALA.IN Tools</strong>
-      <span>फाइल्स browser मध्ये process होतात. कोणतीही फाइल आपोआप server वर साठवली जात नाही.</span>
-    </div>
-  </footer>
+  <footer class="footer"><div class="container footer-inner"><div><strong>CSPWALA.IN</strong><p>सर्व सेवा केंद्रांसाठी माहिती, community आणि digital tools.</p></div><div><a href="https://cspwala.in">मुख्य वेबसाइट</a><a href="#all-tools">सर्व टूल्स</a><a href="#categories">Categories</a></div></div></footer>
   <script type="module" src="./assets/tools-page.js"></script>
 </body>
 </html>
