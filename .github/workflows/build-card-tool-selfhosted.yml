@@ -38,14 +38,16 @@ jobs:
           test $(wc -c < /tmp/pdfjs.zip) -gt 5000000
           rm -rf /tmp/pdfjs && mkdir -p /tmp/pdfjs
           unzip -q /tmp/pdfjs.zip -d /tmp/pdfjs
-          PDF_MAIN=$(find /tmp/pdfjs -type f -path '*/build/pdf.min.js' | head -n1)
-          PDF_WORKER=$(find /tmp/pdfjs -type f -path '*/build/pdf.worker.min.js' | head -n1)
+          PDF_MAIN=$(find /tmp/pdfjs -type f -path '*/build/pdf.js' | head -n1)
+          PDF_WORKER=$(find /tmp/pdfjs -type f -path '*/build/pdf.worker.js' | head -n1)
+          echo "PDF_MAIN=$PDF_MAIN"
+          echo "PDF_WORKER=$PDF_WORKER"
           test -s "$PDF_MAIN"
           test -s "$PDF_WORKER"
-          cp "$PDF_MAIN" dist/vendor/pdf.min.js
-          cp "$PDF_WORKER" dist/vendor/pdf.worker.min.js
-          test $(wc -c < dist/vendor/pdf.min.js) -gt 200000
-          test $(wc -c < dist/vendor/pdf.worker.min.js) -gt 900000
+          cp "$PDF_MAIN" dist/vendor/pdf.js
+          cp "$PDF_WORKER" dist/vendor/pdf.worker.js
+          test $(wc -c < dist/vendor/pdf.js) -gt 500000
+          test $(wc -c < dist/vendor/pdf.worker.js) -gt 1500000
 
       - name: Patch to local same-origin PDF engine
         run: |
@@ -55,7 +57,7 @@ jobs:
           import re
           p=Path('dist/index.html')
           s=p.read_text(encoding='utf-8')
-          local_tag='<script data-pdf-engine="1" src="./vendor/pdf.min.js?v=3.11.174"></script>'
+          local_tag='<script data-pdf-engine="1" src="./vendor/pdf.js?v=3.11.174"></script>'
           s,n=re.subn(r'<script[^>]*data-pdf-engine="1"[^>]*src="[^"]+"[^>]*></script>',local_tag,s,count=1,flags=re.I)
           if n==0:
               s,n=re.subn(r'<script[^>]+src="https?://[^"]*(?:pdf\.combined|pdf(?:\.min)?\.js)[^"]*"[^>]*></script>',local_tag,s,count=1,flags=re.I)
@@ -74,7 +76,7 @@ jobs:
               '      await new Promise((resolve,reject)=>{',
               '        const sc=document.createElement("script");',
               '        sc.dataset.pdfEngine="retry";',
-              '        sc.src="./vendor/pdf.min.js?v=3.11.174";',
+              '        sc.src="./vendor/pdf.js?v=3.11.174";',
               '        sc.onload=resolve;',
               '        sc.onerror=()=>reject(new Error("Local PDF engine file load failed"));',
               '        document.head.appendChild(sc);',
@@ -82,7 +84,7 @@ jobs:
               '    }',
               '    if(!window.pdfjsLib?.getDocument)throw new Error("Local PDF engine API missing");',
               '    if(pdfjsLib.GlobalWorkerOptions){',
-              '      pdfjsLib.GlobalWorkerOptions.workerSrc=new URL("./vendor/pdf.worker.min.js?v=3.11.174",window.location.href).href;',
+              '      pdfjsLib.GlobalWorkerOptions.workerSrc=new URL("./vendor/pdf.worker.js?v=3.11.174",window.location.href).href;',
               '    }',
               '    state.pdfReady=true;',
               '    setMsg("PDF Engine Ready — Self Hosted","ok");',
@@ -102,8 +104,8 @@ jobs:
           s=s.replace('PDF engine load झाला नाही. Hosting बाहेरील JavaScript/CDN block करत आहे. Image files मात्र काम करतील.','PDF engine local files load झाले नाहीत.')
           p.write_text(s,encoding='utf-8')
           PY
-          grep -q './vendor/pdf.min.js' dist/index.html
-          grep -q './vendor/pdf.worker.min.js' dist/index.html
+          grep -q './vendor/pdf.js' dist/index.html
+          grep -q './vendor/pdf.worker.js' dist/index.html
           ! grep -Eqi 'cdnjs\.cloudflare\.com/.*/pdf\.js|cdn\.jsdelivr\.net/.*/pdfjs|unpkg\.com/.*/pdfjs' dist/index.html
           ! grep -qi 'pdf-proxy-sw.js' dist/index.html
 
@@ -112,32 +114,25 @@ jobs:
           set -euxo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          objs=[
-              b'<< /Type /Catalog /Pages 2 0 R >>',
-              b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-              b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
-          ]
+          objs=[b'<< /Type /Catalog /Pages 2 0 R >>',b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>']
           stream=b'BT /F1 18 Tf 30 100 Td (CSPWALA PDF Engine Test) Tj ET'
           objs.append(b'<< /Length '+str(len(stream)).encode()+b' >>\nstream\n'+stream+b'\nendstream')
           objs.append(b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>')
-          out=bytearray(b'%PDF-1.4\n%\xe2\xe3\xcf\xd3\n')
-          offsets=[]
+          out=bytearray(b'%PDF-1.4\n%\xe2\xe3\xcf\xd3\n'); offsets=[]
           for i,obj in enumerate(objs,1):
-              offsets.append(len(out))
-              out += f'{i} 0 obj\n'.encode()+obj+b'\nendobj\n'
-          xref=len(out)
-          out += f'xref\n0 {len(objs)+1}\n'.encode()+b'0000000000 65535 f \n'
+              offsets.append(len(out)); out += f'{i} 0 obj\n'.encode()+obj+b'\nendobj\n'
+          xref=len(out); out += f'xref\n0 {len(objs)+1}\n'.encode()+b'0000000000 65535 f \n'
           for off in offsets: out += f'{off:010d} 00000 n \n'.encode()
           out += f'trailer\n<< /Size {len(objs)+1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n'.encode()
           Path('dist/pdf-selftest.pdf').write_bytes(out)
           html='\n'.join([
               '<!doctype html><meta charset="utf-8"><title>PDF Engine Self Test</title>',
-              '<script src="./vendor/pdf.min.js?v=3.11.174"></script>',
+              '<script src="./vendor/pdf.js?v=3.11.174"></script>',
               '<div id="result">PDF_ENGINE_LOADING</div><canvas id="c"></canvas>',
               '<script>',
               '(async()=>{try{',
               'if(!window.pdfjsLib?.getDocument)throw new Error("pdfjsLib missing");',
-              'pdfjsLib.GlobalWorkerOptions.workerSrc=new URL("./vendor/pdf.worker.min.js?v=3.11.174",location.href).href;',
+              'pdfjsLib.GlobalWorkerOptions.workerSrc=new URL("./vendor/pdf.worker.js?v=3.11.174",location.href).href;',
               'const bytes=new Uint8Array(await (await fetch("./pdf-selftest.pdf")).arrayBuffer());',
               'const pdf=await pdfjsLib.getDocument({data:bytes}).promise;',
               'const page=await pdf.getPage(1); const viewport=page.getViewport({scale:1});',
@@ -157,8 +152,8 @@ jobs:
           SERVER_PID=$!
           trap 'kill $SERVER_PID || true' EXIT
           sleep 2
-          curl -fsS http://127.0.0.1:8123/vendor/pdf.min.js >/dev/null
-          curl -fsS http://127.0.0.1:8123/vendor/pdf.worker.min.js >/dev/null
+          curl -fsS http://127.0.0.1:8123/vendor/pdf.js >/dev/null
+          curl -fsS http://127.0.0.1:8123/vendor/pdf.worker.js >/dev/null
           CHROME=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)
           echo "CHROME=$CHROME"
           test -n "$CHROME"
@@ -175,7 +170,7 @@ jobs:
           rm -f dist/pdf-selftest.html dist/pdf-selftest.pdf
           python3 - <<'PY'
           from pathlib import Path
-          report='''CSPWALA Smart Card Auto Crop & Print Tool — V22 Self-Hosted PDF Engine\n\nValidation completed in GitHub Actions Ubuntu browser environment.\n- Current published Smart Card Tool runtime downloaded from tools.cspwala.in.\n- Mozilla PDF.js 3.11.174 downloaded from official Mozilla GitHub release.\n- PDF main library packaged locally: vendor/pdf.min.js.\n- PDF worker packaged locally: vendor/pdf.worker.min.js.\n- External PDF.js CDN references removed (cdnjs/jsDelivr/unpkg).\n- Service-worker/proxy dependency removed.\n- Same-origin HTTP requests for both vendor files passed.\n- Headless Chrome loaded PDF.js main library + worker from same-origin local server.\n- A generated real one-page PDF was parsed and rendered to Canvas.\n- Browser result passed: PDF_ENGINE_PASS pages=1 canvas=200x200.\n- Main tool page reached: PDF Engine Ready — Self Hosted.\n- User PDF/image/password processing remains in the browser; the tool does not upload these files.\n\nZIP root layout:\nindex.html\nvendor/pdf.min.js\nvendor/pdf.worker.min.js\n'''
+          report='''CSPWALA Smart Card Auto Crop & Print Tool — V22 Self-Hosted PDF Engine\n\nValidation completed in GitHub Actions Ubuntu browser environment.\n- Current published Smart Card Tool runtime downloaded from tools.cspwala.in.\n- Mozilla PDF.js 3.11.174 downloaded from official Mozilla GitHub release.\n- PDF main library packaged locally: vendor/pdf.js.\n- PDF worker packaged locally: vendor/pdf.worker.js.\n- External PDF.js CDN references removed (cdnjs/jsDelivr/unpkg).\n- Service-worker/proxy dependency removed.\n- Same-origin HTTP requests for both vendor files passed.\n- Headless Chrome loaded PDF.js main library + worker from same-origin local server.\n- A generated real one-page PDF was parsed and rendered to Canvas.\n- Browser result passed: PDF_ENGINE_PASS pages=1 canvas=200x200.\n- Main tool page reached: PDF Engine Ready — Self Hosted.\n- User PDF/image/password processing remains in the browser; the tool does not upload these files.\n\nZIP root layout:\nindex.html\nvendor/pdf.js\nvendor/pdf.worker.js\n'''
           Path('release/CSPWALA_Card_Tool_FINAL_v22_SELF_HOSTED_TEST_REPORT.txt').write_text(report,encoding='utf-8')
           PY
           (cd dist && zip -qr ../release/CSPWALA_Card_Tool_FINAL_v22_SELF_HOSTED_ROOT.zip index.html vendor)
