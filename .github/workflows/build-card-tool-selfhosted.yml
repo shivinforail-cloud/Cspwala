@@ -1,4 +1,4 @@
-name: Inspect CSPWALA hosted tool
+name: Inspect CSPWALA tool engine
 
 on:
   push:
@@ -14,10 +14,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Fetch hosted route and inspect
+      - name: Inspect SPA asset for tool source endpoint
         run: |
           set -euxo pipefail
-          curl -iL --retry 2 --connect-timeout 20 'https://tools.cspwala.in/smart-card-auto-crop' -o /tmp/response.txt
-          echo '--- RESPONSE START ---'
-          cat /tmp/response.txt
-          echo '--- RESPONSE END ---'
+          curl -fL --retry 3 'https://tools.cspwala.in/assets/index-5X7A2wcU.js' -o /tmp/app.js
+          echo SIZE=$(wc -c < /tmp/app.js)
+          python3 - <<'PY'
+          import re
+          s=open('/tmp/app.js',encoding='utf-8',errors='ignore').read()
+          terms=['smart-card-auto-crop','EXTERNAL_URL','ZIP','zip','storage.googleapis.com','firebasestorage','firebase','iframe','srcDoc','toolUrl','downloadUrl','assetUrl','contentUrl','/api/','tools/']
+          for term in terms:
+              print('\n### TERM',term)
+              start=0
+              n=0
+              while True:
+                  i=s.find(term,start)
+                  if i<0 or n>=8: break
+                  print(s[max(0,i-500):min(len(s),i+800)].replace('\n',' '))
+                  start=i+len(term); n+=1
+          print('\n### URL CANDIDATES')
+          urls=sorted(set(re.findall(r'https?://[^\"\'\\\s)]+',s)))
+          for u in urls:
+              if any(k in u.lower() for k in ['firebase','storage','cspwala','zip','api']): print(u[:1000])
+          PY
