@@ -1,0 +1,20 @@
+CSPWALA Smart Card Auto Crop & Print Tool — V22 Self-Hosted PDF Engine
+
+Validation completed in GitHub Actions Ubuntu/Chrome environment.
+- Current published Smart Card Tool runtime downloaded from tools.cspwala.in.
+- Mozilla PDF.js 3.11.174 downloaded automatically from the official Mozilla GitHub release.
+- PDF main library packaged locally: vendor/pdf.js.
+- PDF worker packaged locally: vendor/pdf.worker.js.
+- Both PDF.js files passed JavaScript syntax validation.
+- External PDF.js CDN references removed (cdnjs/jsDelivr/unpkg).
+- Service-worker/proxy dependency removed.
+- Same-origin HTTP requests for both local vendor files passed.
+- Headless Chrome loaded the local PDF.js main library and exposed pdfjsLib.getDocument.
+- A generated valid one-page PDF was parsed with the packaged PDF.js engine in Node: pages=1, 200x200.
+- Main tool page reached status: PDF Engine Ready — Self Hosted.
+- User PDF/image/password processing remains in the browser; the tool does not upload these files.
+
+ZIP root layout:
+index.html
+vendor/pdf.js
+vendor/pdf.worker.js
