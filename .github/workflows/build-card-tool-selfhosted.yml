@@ -1,4 +1,4 @@
-name: Build CSPWALA card tool self-hosted
+name: Inspect CSPWALA hosted tool
 
 on:
   push:
@@ -10,101 +10,14 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  inspect:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download currently hosted tool
+      - uses: actions/checkout@v4
+      - name: Fetch hosted route and inspect
         run: |
           set -euxo pipefail
-          mkdir -p dist/vendor release
-          curl -fL --retry 4 --connect-timeout 20 'https://tools.cspwala.in/smart-card-auto-crop' -o dist/index.html
-          test $(wc -c < dist/index.html) -gt 30000
-          grep -q 'Smart Card' dist/index.html
-
-      - name: Bundle Mozilla PDF.js 3.11.174 locally
-        run: |
-          set -euxo pipefail
-          curl -fL --retry 4 --connect-timeout 20 \
-            'https://github.com/mozilla/pdf.js/releases/download/v3.11.174/pdfjs-3.11.174-dist.zip' \
-            -o /tmp/pdfjs.zip
-          mkdir -p /tmp/pdfjs
-          unzip -q /tmp/pdfjs.zip -d /tmp/pdfjs
-          PDF_MAIN=$(find /tmp/pdfjs -type f -path '*/build/pdf.min.js' | head -n1)
-          PDF_WORKER=$(find /tmp/pdfjs -type f -path '*/build/pdf.worker.min.js' | head -n1)
-          test -s "$PDF_MAIN"
-          test -s "$PDF_WORKER"
-          cp "$PDF_MAIN" dist/vendor/pdf.min.js
-          cp "$PDF_WORKER" dist/vendor/pdf.worker.min.js
-          grep -q 'Mozilla Foundation' dist/vendor/pdf.min.js
-
-      - name: Patch tool to use same-origin PDF engine only
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-          p=Path('dist/index.html')
-          s=p.read_text(encoding='utf-8')
-          # Replace any eager external PDF.js script with the packaged same-origin engine.
-          s=re.sub(r'<script[^>]*data-pdf-engine="1"[^>]*src="[^"]+"[^>]*></script>',
-                   '<script data-pdf-engine="1" src="./vendor/pdf.min.js"></script>', s, count=1)
-          # If no data-pdf-engine tag existed, add one before the first inline script.
-          if './vendor/pdf.min.js' not in s:
-              pos=s.find('<script>')
-              if pos < 0:
-                  raise SystemExit('Could not locate tool script')
-              s=s[:pos]+'<script data-pdf-engine="1" src="./vendor/pdf.min.js"></script>\n'+s[pos:]
-          start=s.find('async function initPdf(')
-          end=s.find('function chooseFile()', start)
-          if start < 0 or end < 0:
-              raise SystemExit('initPdf block not found')
-          local_loader="""async function initPdf({force=false}={}){\n  try{\n    if(!window.pdfjsLib?.getDocument){\n      if(force){document.querySelectorAll('script[data-pdf-engine=\\"retry\\"]').forEach(n=>n.remove())}\n      await new Promise((resolve,reject)=>{\n        const sc=document.createElement('script');\n        sc.dataset.pdfEngine='retry';\n        sc.src='./vendor/pdf.min.js?v=3.11.174';\n        sc.onload=resolve;\n        sc.onerror=()=>reject(new Error('Local PDF engine file load failed'));\n        document.head.appendChild(sc);\n      });\n    }\n    if(!window.pdfjsLib?.getDocument)throw new Error('Local PDF engine API missing');\n    if(pdfjsLib.GlobalWorkerOptions)pdfjsLib.GlobalWorkerOptions.workerSrc='./vendor/pdf.worker.min.js?v=3.11.174';\n    state.pdfReady=true;\n    setMsg('PDF Engine Ready — Self Hosted','ok');\n    return true;\n  }catch(e){\n    state.pdfReady=false;\n    console.error('Local PDF engine:',e);\n    setMsg('PDF engine local file load झाला नाही. vendor/pdf.min.js आणि pdf.worker.min.js host झाले आहेत का तपासा.','bad');\n    return false;\n  }\n}\n"""
-          s=s[:start]+local_loader+s[end:]
-          # Remove stale hosted/CDN status copy where possible.
-          s=s.replace('Hosted build: PDF engine same-origin proxy वापरतो; card/PDF data server वर upload होत नाही.',
-                      'Self-hosted PDF engine: PDF.js files tool सोबतच आहेत; card/PDF data server वर upload होत नाही.')
-          s=s.replace('PDF engine load झाला नाही. Hosting बाहेरील JavaScript/CDN block करत आहे. Image files मात्र काम करतील.',
-                      'PDF engine local file load झाला नाही.')
-          p.write_text(s,encoding='utf-8')
-          PY
-
-      - name: Validate package and create ZIP
-        run: |
-          set -euxo pipefail
-          ! grep -q 'cdnjs.cloudflare.com/ajax/libs/pdf.js' dist/index.html
-          ! grep -q 'cdn.jsdelivr.net/npm/pdfjs-dist' dist/index.html
-          ! grep -q 'unpkg.com/pdfjs-dist' dist/index.html
-          grep -q './vendor/pdf.min.js' dist/index.html
-          grep -q './vendor/pdf.worker.min.js' dist/index.html
-          node --check <(python3 - <<'PY'
-          from pathlib import Path
-          import re
-          s=Path('dist/index.html').read_text()
-          parts=re.findall(r'<script(?: [^>]*)?>(.*?)</script>',s,re.S)
-          print('\n'.join(parts))
-          PY
-          ) || true
-          cp -R dist release/CSPWALA_Card_Tool_FINAL_v22_SELF_HOSTED
-          cd release/CSPWALA_Card_Tool_FINAL_v22_SELF_HOSTED
-          zip -qr ../CSPWALA_Card_Tool_FINAL_v22_SELF_HOSTED_ROOT.zip index.html vendor
-          cd ../..
-          sha256sum release/CSPWALA_Card_Tool_FINAL_v22_SELF_HOSTED_ROOT.zip > release/CSPWALA_Card_Tool_FINAL_v22_SELF_HOSTED_SHA256.txt
-          unzip -l release/CSPWALA_Card_Tool_FINAL_v22_SELF_HOSTED_ROOT.zip
-
-      - name: Commit release files
-        run: |
-          set -euxo pipefail
-          git config user.name 'CSPWALA Build Bot'
-          git config user.email 'actions@users.noreply.github.com'
-          git add release
-          git commit -m 'Build self-hosted card tool v22 [skip ci]' || true
-          git push
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: CSPWALA_Card_Tool_FINAL_v22_SELF_HOSTED
-          path: release/CSPWALA_Card_Tool_FINAL_v22_SELF_HOSTED_ROOT.zip
-          if-no-files-found: error
+          curl -iL --retry 2 --connect-timeout 20 'https://tools.cspwala.in/smart-card-auto-crop' -o /tmp/response.txt
+          echo '--- RESPONSE START ---'
+          cat /tmp/response.txt
+          echo '--- RESPONSE END ---'
