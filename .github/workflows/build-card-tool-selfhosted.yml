@@ -1,4 +1,4 @@
-name: Discover CSPWALA card tool package
+name: Build CSPWALA Card Tool V22 Self Hosted
 
 on:
   push:
@@ -10,31 +10,28 @@ permissions:
   contents: write
 
 jobs:
-  discover:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Query public CSPWALA tool metadata and launch
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download current published card-tool runtime
         run: |
           set -euxo pipefail
+          mkdir -p dist/vendor release
           BASE='https://asia-south1-studio-9554958219-678f5.cloudfunctions.net'
           curl -fsS -X POST "$BASE/publicGetTool" \
             -H 'Content-Type: application/json' \
             -H 'Origin: https://tools.cspwala.in' \
             --data '{"data":{"idOrSlug":"smart-card-auto-crop"}}' \
             -o /tmp/tool.json
-          echo '=== TOOL JSON ==='
-          cat /tmp/tool.json
           TOOL_ID=$(python3 - <<'PY'
           import json
-          d=json.load(open('/tmp/tool.json'))
-          root=d.get('result',d.get('data',d))
-          tool=root.get('tool',root)
-          print(tool.get('id') or tool.get('toolId') or '')
+          d=json.load(open('/tmp/tool.json'))['result']['tool']
+          print(d['id'])
           PY
           )
-          echo "TOOL_ID=$TOOL_ID"
-          test -n "$TOOL_ID"
           python3 - "$TOOL_ID" > /tmp/payload.json <<'PY'
           import json,sys
           print(json.dumps({'data':{'toolId':sys.argv[1]}}))
@@ -44,24 +41,234 @@ jobs:
             -H 'Origin: https://tools.cspwala.in' \
             --data-binary @/tmp/payload.json \
             -o /tmp/launch.json
-          echo '=== LAUNCH JSON ==='
-          cat /tmp/launch.json
-          echo
-          python3 - <<'PY'
-          import json,re
-          for f in ['/tmp/tool.json','/tmp/launch.json']:
-              d=json.load(open(f))
-              print('\nFILE',f)
-              def walk(x,path=''):
-                  if isinstance(x,dict):
-                      for k,v in x.items():
-                          p=f'{path}.{k}' if path else k
-                          if isinstance(v,(str,int,float,bool)) or v is None:
-                              s=str(v)
-                              if any(q in k.lower() for q in ['url','path','artifact','entry','zip','version','host','source','file','launch','asset']) or ('http' in s.lower()) or ('.zip' in s.lower()):
-                                  print(p,'=',s)
-                          walk(v,p)
-                  elif isinstance(x,list):
-                      for i,v in enumerate(x): walk(v,f'{path}[{i}]')
-              walk(d)
+          RUNTIME_URL=$(python3 - <<'PY'
+          import json
+          print(json.load(open('/tmp/launch.json'))['result']['url'])
           PY
+          )
+          echo "Runtime: $RUNTIME_URL"
+          curl -fsSL --retry 4 --connect-timeout 20 "https://tools.cspwala.in${RUNTIME_URL}" -o dist/index.html
+          test $(wc -c < dist/index.html) -gt 30000
+          grep -q 'Smart Card Auto Crop' dist/index.html
+          cp dist/index.html /tmp/original-index.html
+
+      - name: Download and bundle official Mozilla PDF.js 3.11.174
+        run: |
+          set -euxo pipefail
+          curl -fL --retry 5 --connect-timeout 30 \
+            'https://github.com/mozilla/pdf.js/releases/download/v3.11.174/pdfjs-3.11.174-dist.zip' \
+            -o /tmp/pdfjs.zip
+          test $(wc -c < /tmp/pdfjs.zip) -gt 5000000
+          rm -rf /tmp/pdfjs && mkdir -p /tmp/pdfjs
+          unzip -q /tmp/pdfjs.zip -d /tmp/pdfjs
+          PDF_MAIN=$(find /tmp/pdfjs -type f -path '*/build/pdf.min.js' | head -n1)
+          PDF_WORKER=$(find /tmp/pdfjs -type f -path '*/build/pdf.worker.min.js' | head -n1)
+          echo "PDF_MAIN=$PDF_MAIN"
+          echo "PDF_WORKER=$PDF_WORKER"
+          test -s "$PDF_MAIN"
+          test -s "$PDF_WORKER"
+          cp "$PDF_MAIN" dist/vendor/pdf.min.js
+          cp "$PDF_WORKER" dist/vendor/pdf.worker.min.js
+          test $(wc -c < dist/vendor/pdf.min.js) -gt 200000
+          test $(wc -c < dist/vendor/pdf.worker.min.js) -gt 900000
+
+      - name: Patch tool to same-origin local PDF engine only
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('dist/index.html')
+          s=p.read_text(encoding='utf-8')
+
+          # Replace eager external engine tag with packaged local PDF.js.
+          s2,n=re.subn(
+              r'<script[^>]*data-pdf-engine="1"[^>]*src="[^"]+"[^>]*></script>',
+              '<script data-pdf-engine="1" src="./vendor/pdf.min.js?v=3.11.174"></script>',
+              s,
+              count=1,
+              flags=re.I,
+          )
+          if n == 0:
+              # Fallback for older tag without data attribute.
+              s2,n=re.subn(
+                  r'<script[^>]+src="https?://[^"]*(?:pdf\.combined|pdf(?:\.min)?\.js)[^"]*"[^>]*></script>',
+                  '<script data-pdf-engine="1" src="./vendor/pdf.min.js?v=3.11.174"></script>',
+                  s,
+                  count=1,
+                  flags=re.I,
+              )
+          s=s2
+          if n == 0:
+              pos=s.find('</head>')
+              if pos < 0: raise SystemExit('No </head> found')
+              s=s[:pos]+'<script data-pdf-engine="1" src="./vendor/pdf.min.js?v=3.11.174"></script>\n'+s[pos:]
+
+          # Replace the complete CDN fallback loader with a same-origin-only loader.
+          start=s.find('async function initPdf(')
+          end=s.find('function chooseFile()', start)
+          if start < 0 or end < 0:
+              raise SystemExit('initPdf / chooseFile block not found')
+          loader=r'''async function initPdf({force=false}={}){
+  try{
+    if(!window.pdfjsLib?.getDocument){
+      if(force){document.querySelectorAll('script[data-pdf-engine="retry"]').forEach(n=>n.remove())}
+      await new Promise((resolve,reject)=>{
+        const sc=document.createElement('script');
+        sc.dataset.pdfEngine='retry';
+        sc.src='./vendor/pdf.min.js?v=3.11.174';
+        sc.onload=resolve;
+        sc.onerror=()=>reject(new Error('Local PDF engine file load failed'));
+        document.head.appendChild(sc);
+      });
+    }
+    if(!window.pdfjsLib?.getDocument)throw new Error('Local PDF engine API missing');
+    if(pdfjsLib.GlobalWorkerOptions){
+      pdfjsLib.GlobalWorkerOptions.workerSrc=new URL('./vendor/pdf.worker.min.js?v=3.11.174',window.location.href).href;
+    }
+    state.pdfReady=true;
+    setMsg('PDF Engine Ready — Self Hosted','ok');
+    return true;
+  }catch(e){
+    state.pdfReady=false;
+    console.error('Self-hosted PDF engine:',e);
+    setMsg('PDF engine local files load झाले नाहीत. ZIP मधील vendor folder host झाला आहे का तपासा.','bad');
+    return false;
+  }
+}
+'''
+          s=s[:start]+loader+s[end:]
+
+          replacements={
+            'Single-file hosted build: PDF engine public library मधून load होतो; card/PDF/password data server वर upload होत नाही.':'Self-hosted PDF engine: PDF.js tool च्या ZIP मध्येच आहे; card/PDF/password data server वर upload होत नाही.',
+            'Hosted build: PDF engine same-origin proxy वापरतो; card/PDF data server वर upload होत नाही.':'Self-hosted PDF engine: PDF.js tool च्या ZIP मध्येच आहे; card/PDF data server वर upload होत नाही.',
+            'PDF engine load झाला नाही. Hosting बाहेरील JavaScript/CDN block करत आहे. Image files मात्र काम करतील.':'PDF engine local files load झाले नाहीत.',
+          }
+          for a,b in replacements.items(): s=s.replace(a,b)
+          p.write_text(s,encoding='utf-8')
+          PY
+
+          grep -q './vendor/pdf.min.js' dist/index.html
+          grep -q './vendor/pdf.worker.min.js' dist/index.html
+          ! grep -Eqi 'cdnjs\.cloudflare\.com/.*/pdf\.js|cdn\.jsdelivr\.net/.*/pdfjs|unpkg\.com/.*/pdfjs' dist/index.html
+          ! grep -qi 'pdf-proxy-sw.js' dist/index.html
+
+      - name: Create a real PDF.js browser self-test
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          # Generate a valid one-page PDF with correct xref offsets.
+          objs=[]
+          objs.append(b'<< /Type /Catalog /Pages 2 0 R >>')
+          objs.append(b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>')
+          objs.append(b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>')
+          stream=b'BT /F1 18 Tf 30 100 Td (CSPWALA PDF Engine Test) Tj ET'
+          objs.append(b'<< /Length '+str(len(stream)).encode()+b' >>\nstream\n'+stream+b'\nendstream')
+          objs.append(b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>')
+          out=bytearray(b'%PDF-1.4\n%\xe2\xe3\xcf\xd3\n')
+          offsets=[0]
+          for i,obj in enumerate(objs,1):
+              offsets.append(len(out))
+              out += f'{i} 0 obj\n'.encode()+obj+b'\nendobj\n'
+          xref=len(out)
+          out += f'xref\n0 {len(objs)+1}\n'.encode()
+          out += b'0000000000 65535 f \n'
+          for off in offsets[1:]: out += f'{off:010d} 00000 n \n'.encode()
+          out += f'trailer\n<< /Size {len(objs)+1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n'.encode()
+          Path('dist/pdf-selftest.pdf').write_bytes(out)
+          PY
+          cat > dist/pdf-selftest.html <<'HTML'
+          <!doctype html><meta charset="utf-8"><title>PDF Engine Self Test</title>
+          <script src="./vendor/pdf.min.js?v=3.11.174"></script>
+          <div id="result">PDF_ENGINE_LOADING</div><canvas id="c"></canvas>
+          <script>
+          (async()=>{
+            try{
+              if(!window.pdfjsLib?.getDocument) throw new Error('pdfjsLib missing');
+              pdfjsLib.GlobalWorkerOptions.workerSrc=new URL('./vendor/pdf.worker.min.js?v=3.11.174',location.href).href;
+              const bytes=new Uint8Array(await (await fetch('./pdf-selftest.pdf')).arrayBuffer());
+              const pdf=await pdfjsLib.getDocument({data:bytes}).promise;
+              const page=await pdf.getPage(1);
+              const viewport=page.getViewport({scale:1});
+              const c=document.getElementById('c'); c.width=viewport.width; c.height=viewport.height;
+              await page.render({canvasContext:c.getContext('2d'),viewport}).promise;
+              document.getElementById('result').textContent='PDF_ENGINE_PASS pages='+pdf.numPages+' canvas='+c.width+'x'+c.height;
+            }catch(e){document.getElementById('result').textContent='PDF_ENGINE_FAIL '+e.message; console.error(e)}
+          })();
+          </script>
+          HTML
+
+      - name: Run hosted-browser tests with Chrome
+        run: |
+          set -euxo pipefail
+          python3 -m http.server 8123 --directory dist >/tmp/http.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID || true' EXIT
+          sleep 2
+          curl -fsS http://127.0.0.1:8123/vendor/pdf.min.js >/dev/null
+          curl -fsS http://127.0.0.1:8123/vendor/pdf.worker.min.js >/dev/null
+          CHROME=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)
+          echo "CHROME=$CHROME"
+          test -n "$CHROME"
+          "$CHROME" --headless --no-sandbox --disable-gpu --disable-dev-shm-usage --virtual-time-budget=10000 \
+            --dump-dom http://127.0.0.1:8123/pdf-selftest.html > /tmp/selftest-dom.html 2>/tmp/chrome-selftest.log
+          cat /tmp/selftest-dom.html
+          grep -q 'PDF_ENGINE_PASS pages=1 canvas=200x200' /tmp/selftest-dom.html
+          "$CHROME" --headless --no-sandbox --disable-gpu --disable-dev-shm-usage --virtual-time-budget=6000 \
+            --dump-dom http://127.0.0.1:8123/index.html > /tmp/tool-dom.html 2>/tmp/chrome-tool.log || true
+          grep -q 'PDF Engine Ready — Self Hosted' /tmp/tool-dom.html
+          echo 'BROWSER_TEST_PASS'
+
+      - name: Build final root ZIP and report
+        run: |
+          set -euxo pipefail
+          rm -f dist/pdf-selftest.html dist/pdf-selftest.pdf
+          cat > release/CSPWALA_Card_Tool_FINAL_v22_SELF_HOSTED_TEST_REPORT.txt <<'TXT'
+          CSPWALA Smart Card Auto Crop & Print Tool — V22 Self-Hosted PDF Engine
+
+          Validation completed in GitHub Actions Ubuntu browser environment.
+          - Current published Smart Card Tool runtime downloaded from tools.cspwala.in.
+          - Mozilla PDF.js 3.11.174 downloaded from official Mozilla GitHub release.
+          - PDF main library packaged locally: vendor/pdf.min.js.
+          - PDF worker packaged locally: vendor/pdf.worker.min.js.
+          - External PDF.js CDN references removed (cdnjs/jsDelivr/unpkg).
+          - Service-worker/proxy dependency removed.
+          - Same-origin HTTP requests for both vendor files passed.
+          - Headless Chrome loaded PDF.js main library + worker from same-origin local server.
+          - A generated real one-page PDF was parsed and rendered to Canvas.
+          - Expected browser result: PDF_ENGINE_PASS pages=1 canvas=200x200.
+          - Main tool page reached: PDF Engine Ready — Self Hosted.
+          - User PDF/image/password processing remains in the browser; the tool does not upload these files.
+
+          ZIP root layout:
+          index.html
+          vendor/pdf.min.js
+          vendor/pdf.worker.min.js
+          TXT
+          (cd dist && zip -qr ../release/CSPWALA_Card_Tool_FINAL_v22_SELF_HOSTED_ROOT.zip index.html vendor)
+          sha256sum release/CSPWALA_Card_Tool_FINAL_v22_SELF_HOSTED_ROOT.zip > release/CSPWALA_Card_Tool_FINAL_v22_SELF_HOSTED_SHA256.txt
+          unzip -l release/CSPWALA_Card_Tool_FINAL_v22_SELF_HOSTED_ROOT.zip
+          test "$(unzip -Z1 release/CSPWALA_Card_Tool_FINAL_v22_SELF_HOSTED_ROOT.zip | head -n1)" = 'index.html'
+
+      - name: Commit final release to repository
+        run: |
+          set -euxo pipefail
+          git config user.name 'CSPWALA Build Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add release/CSPWALA_Card_Tool_FINAL_v22_SELF_HOSTED_ROOT.zip \
+                  release/CSPWALA_Card_Tool_FINAL_v22_SELF_HOSTED_SHA256.txt \
+                  release/CSPWALA_Card_Tool_FINAL_v22_SELF_HOSTED_TEST_REPORT.txt
+          git commit -m 'Build CSPWALA Card Tool V22 self-hosted PDF engine [skip ci]'
+          git push
+
+      - name: Upload downloadable build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CSPWALA_Card_Tool_FINAL_v22_SELF_HOSTED
+          path: |
+            release/CSPWALA_Card_Tool_FINAL_v22_SELF_HOSTED_ROOT.zip
+            release/CSPWALA_Card_Tool_FINAL_v22_SELF_HOSTED_SHA256.txt
+            release/CSPWALA_Card_Tool_FINAL_v22_SELF_HOSTED_TEST_REPORT.txt
+          if-no-files-found: error
+          retention-days: 30
