@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="mr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#092d42">
+  <title>CSPWALA Tool Workspace</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">मुख्य मजकुराकडे जा</a>
+  <header class="site-header"><div class="header-inner"><a class="brand" href="../"><span class="brand-mark">C</span><span><b>CSPWALA.IN</b><small>DIGITAL TOOL WORKSPACE</small></span></a><div class="header-actions"><a class="btn btn-secondary" href="../">← सर्व टूल्स</a></div></div></header>
+  <main id="main" class="tool-page"><div class="container">
+    <nav class="breadcrumbs"><a href="https://cspwala.in">CSPWALA</a> › <a href="../">Tools</a> › <span id="crumbName">Workspace</span></nav>
+    <div class="tool-title-row"><div class="tool-title"><div id="toolIcon" class="tool-icon">🛠️</div><div><h1 id="toolName">Tool Workspace</h1><p id="toolEnglish" class="muted"></p></div></div><button id="favouriteTool" class="favorite-btn large" type="button" aria-pressed="false" title="Favourite">☆</button></div>
+    <div class="tool-layout">
+      <section>
+        <div class="panel privacy-note" id="privacyNotice">🔒 फाइल processing browser मध्ये होते.</div>
+        <div class="panel workspace-panel"><div id="workspace"></div><div id="status" class="status" role="status" aria-live="polite"></div><div id="errorBox" class="error-box" role="alert"></div></div>
+        <div class="panel"><h2>महत्त्वाची माहिती</h2><div id="toolInfo" class="info-copy"></div></div>
+      </section>
+      <aside><div class="panel sticky-panel"><h2>कसे वापरावे?</h2><ol id="steps" class="info-list"></ol><hr><h2>सुरक्षित वापर</h2><ul class="info-list"><li>काम झाल्यावर Reset/Clear करा.</li><li>Official portal ची size व format अट स्वतः तपासा.</li><li>आधार, PAN व इतर ID अनोळखी व्यक्तीशी share करू नका.</li></ul></div></aside>
+    </div>
+  </div></main>
+  <footer class="footer"><div class="container footer-inner"><strong>CSPWALA.IN Tools</strong><span>Original local tool module • No copied PC Tool source or templates</span></div></footer>
+  <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js" defer></script>
+  <script type="module" src="../assets/workspace.js"></script>
+</body>
+</html>
