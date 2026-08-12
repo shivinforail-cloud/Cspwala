@@ -2,12 +2,17 @@ const DEFAULTS = {
   observing: false,
   sessionId: null,
   sessionStartedAt: null,
+  segmentId: null,
+  segmentStartedAt: null,
+  lastEventAt: null,
   events: [],
   workflows: [],
   settings: {
     captureScreenshots: false,
     maxEvents: 8000,
-    redactSensitiveValues: true
+    redactSensitiveValues: true,
+    autoSegmentMinutes: 10,
+    learnOnSuccess: true
   }
 };
 
@@ -74,7 +79,7 @@ function actionSignature(event) {
 
 function compressActions(events) {
   const useful = events.filter((e) => [
-    'page_view', 'click', 'input', 'change', 'submit', 'download', 'error', 'success'
+    'page_view', 'navigation', 'click', 'input', 'change', 'submit', 'download', 'error', 'success'
   ].includes(e.type));
 
   const result = [];
@@ -105,10 +110,17 @@ function workflowFingerprint(actions) {
   return actions.map((a) => a.signature).join('>').slice(0, 12000);
 }
 
-async function learnFromSession(sessionId) {
+function workflowTitle(events, actions) {
+  const meaningful = [...events].reverse().find((e) => e.title && !/^new tab$/i.test(e.title));
+  if (meaningful?.title) return meaningful.title;
+  try { return new URL(actions[0]?.url).hostname; } catch { return 'Observed browser workflow'; }
+}
+
+async function learnFromSegment(segmentId) {
+  if (!segmentId) return null;
   const state = await getState();
-  const sessionEvents = state.events.filter((e) => e.sessionId === sessionId);
-  const actions = compressActions(sessionEvents);
+  const segmentEvents = state.events.filter((e) => e.segmentId === segmentId);
+  const actions = compressActions(segmentEvents);
   if (actions.length < 2) return null;
 
   const fingerprint = workflowFingerprint(actions);
@@ -116,15 +128,17 @@ async function learnFromSession(sessionId) {
   const hostname = (() => {
     try { return new URL(actions[0].url).hostname; } catch { return 'Unknown website'; }
   })();
-  const title = sessionEvents.find((e) => e.title)?.title || hostname;
+  const title = workflowTitle(segmentEvents, actions);
 
   let workflow;
   if (existingIndex >= 0) {
+    const old = state.workflows[existingIndex];
+    const occurrences = (old.occurrences || 1) + 1;
     workflow = {
-      ...state.workflows[existingIndex],
-      occurrences: (state.workflows[existingIndex].occurrences || 1) + 1,
+      ...old,
+      occurrences,
       lastObservedAt: nowIso(),
-      confidence: Math.min(0.95, 0.35 + ((state.workflows[existingIndex].occurrences || 1) + 1) * 0.12)
+      confidence: Math.min(0.95, 0.35 + occurrences * 0.12)
     };
     state.workflows[existingIndex] = workflow;
   } else {
@@ -148,21 +162,42 @@ async function learnFromSession(sessionId) {
 }
 
 async function appendEvent(rawEvent, sender) {
-  const state = await getState();
+  let state = await getState();
   if (!state.observing || !state.sessionId) return { ignored: true };
+
+  const eventAt = rawEvent.at || nowIso();
+  let segmentId = state.segmentId || uid('segment');
+  let segmentStartedAt = state.segmentStartedAt || eventAt;
+
+  if (state.lastEventAt) {
+    const gapMs = new Date(eventAt).getTime() - new Date(state.lastEventAt).getTime();
+    const gapLimitMs = Math.max(2, Number(state.settings.autoSegmentMinutes || 10)) * 60 * 1000;
+    if (gapMs > gapLimitMs) {
+      await learnFromSegment(segmentId);
+      state = await getState();
+      segmentId = uid('segment');
+      segmentStartedAt = eventAt;
+    }
+  }
 
   const event = sanitizeEvent({
     ...rawEvent,
     id: uid('evt'),
-    at: rawEvent.at || nowIso(),
+    at: eventAt,
     sessionId: state.sessionId,
+    segmentId,
     tabId: sender?.tab?.id ?? rawEvent.tabId ?? null
   }, state.settings);
 
   const events = [...state.events, event];
   const maxEvents = Math.max(500, Number(state.settings.maxEvents || 8000));
   if (events.length > maxEvents) events.splice(0, events.length - maxEvents);
-  await setState({ events });
+  await setState({
+    events,
+    segmentId,
+    segmentStartedAt,
+    lastEventAt: eventAt
+  });
 
   if (state.settings.captureScreenshots && ['error', 'submit'].includes(event.type) && sender?.tab?.windowId) {
     try {
@@ -175,6 +210,17 @@ async function appendEvent(rawEvent, sender) {
       }
     } catch (err) {
       console.warn('Screenshot capture skipped:', err?.message || err);
+    }
+  }
+
+  if (event.type === 'success' && state.settings.learnOnSuccess !== false) {
+    const workflow = await learnFromSegment(segmentId);
+    if (workflow) {
+      await setState({
+        segmentId: uid('segment'),
+        segmentStartedAt: nowIso(),
+        lastEventAt: eventAt
+      });
     }
   }
 
@@ -199,16 +245,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message.type === 'START_OBSERVING') {
+      const startedAt = nowIso();
       const sessionId = uid('session');
-      await setState({ observing: true, sessionId, sessionStartedAt: nowIso() });
-      return sendResponse({ ok: true, sessionId });
+      const segmentId = uid('segment');
+      await setState({
+        observing: true,
+        sessionId,
+        sessionStartedAt: startedAt,
+        segmentId,
+        segmentStartedAt: startedAt,
+        lastEventAt: null
+      });
+      return sendResponse({ ok: true, sessionId, segmentId });
     }
 
     if (message.type === 'STOP_OBSERVING') {
       const state = await getState();
-      const endedSessionId = state.sessionId;
-      await setState({ observing: false, sessionId: null, sessionStartedAt: null });
-      const workflow = endedSessionId ? await learnFromSession(endedSessionId) : null;
+      const workflow = state.segmentId ? await learnFromSegment(state.segmentId) : null;
+      await setState({
+        observing: false,
+        sessionId: null,
+        sessionStartedAt: null,
+        segmentId: null,
+        segmentStartedAt: null,
+        lastEventAt: null
+      });
       return sendResponse({ ok: true, workflow });
     }
 
