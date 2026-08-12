@@ -46,6 +46,13 @@
     return safeText(el.getAttribute('placeholder') || el.getAttribute('name') || '');
   }
 
+  function valueMarker(el) {
+    if (el.type === 'file') return `[${el.files?.length || 0} file(s)]`;
+    if (el.type === 'checkbox' || el.type === 'radio') return el.checked ? '[CHECKED]' : '[UNCHECKED]';
+    if (el instanceof HTMLSelectElement) return '[OPTION_SELECTED]';
+    return el.value ? '[VALUE_ENTERED]' : '[EMPTY]';
+  }
+
   function send(type, details = {}) {
     try {
       chrome.runtime.sendMessage({
@@ -89,7 +96,7 @@
     send('click', {
       selector: cssSelector(el),
       label: fieldLabel(el),
-      text: safeText(el.innerText || el.value || el.getAttribute?.('title') || el.getAttribute?.('aria-label')),
+      text: safeText(el.innerText || el.getAttribute?.('title') || el.getAttribute?.('aria-label') || (el.matches?.('input[type="button"],input[type="submit"]') ? el.value : '')),
       tag: el.tagName?.toLowerCase() || null
     });
   }, true);
@@ -103,7 +110,7 @@
       label: fieldLabel(el),
       placeholder: el.getAttribute('placeholder') || null,
       inputType: el.type || el.tagName.toLowerCase(),
-      value: el.type === 'file' ? `[${el.files?.length || 0} file(s)]` : el.value
+      value: valueMarker(el)
     });
   }, true);
 
@@ -115,7 +122,7 @@
       name: el.name || null,
       label: fieldLabel(el),
       inputType: el.type || el.tagName.toLowerCase(),
-      value: el.type === 'file' ? `[${el.files?.length || 0} file(s)]` : el.value
+      value: valueMarker(el)
     });
   }, true);
 
