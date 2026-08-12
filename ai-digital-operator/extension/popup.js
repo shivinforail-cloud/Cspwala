@@ -15,11 +15,16 @@ function formatSince(iso) {
 async function render() {
   const state = await message('GET_STATE');
   const observing = Boolean(state.observing);
+  const connected = Boolean(state.cloudAuth?.uid && state.cloudConfig?.projectId && state.cloudConfig?.apiKey);
   document.getElementById('dot').classList.toggle('on', observing);
   document.getElementById('statusText').textContent = observing ? 'Observing ON' : 'Observing OFF';
   document.getElementById('sessionText').textContent = formatSince(state.sessionStartedAt);
   document.getElementById('eventCount').textContent = (state.events || []).length;
   document.getElementById('workflowCount').textContent = (state.workflows || []).length;
+  document.getElementById('customerCount').textContent = Object.keys(state.customerContexts || {}).length;
+  document.getElementById('deviceCount').textContent = Math.max(1, Number(state.cloudStatus?.deviceCount || 0));
+  document.getElementById('cloudText').textContent = connected ? '☁ Cloud Sync: Connected' : '☁ Cloud Sync: Not connected';
+  document.getElementById('deviceText').textContent = `${state.deviceName || 'This PC'} • Pending ${(state.syncQueue || []).length}`;
 
   const button = document.getElementById('toggleBtn');
   button.textContent = observing ? 'Stop & Learn Session' : 'Start Observing';
@@ -28,11 +33,7 @@ async function render() {
 
 document.getElementById('toggleBtn').addEventListener('click', async () => {
   const state = await message('GET_STATE');
-  if (state.observing) {
-    await message('STOP_OBSERVING');
-  } else {
-    await message('START_OBSERVING');
-  }
+  await message(state.observing ? 'STOP_OBSERVING' : 'START_OBSERVING');
   await render();
 });
 
