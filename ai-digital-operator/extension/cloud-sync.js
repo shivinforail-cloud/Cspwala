@@ -77,16 +77,17 @@ const ShadowCloud = (() => {
     return { ...auth, ...refreshed };
   }
 
-  function docName(config, businessId, collection, id) {
-    return `projects/${config.projectId}/databases/(default)/documents/aiOperatorBusinesses/${businessId}/${collection}/${id}`;
+  function docName(config, uid, collection, id) {
+    return `projects/${config.projectId}/databases/(default)/documents/aiOperatorUsers/${uid}/${collection}/${id}`;
   }
 
-  async function commit(config, auth, businessId, operations) {
-    if (!operations.length) return [];
+  async function commit(config, auth, uid, operations) {
+    if (!operations.length) return { token: auth, writeResults: [] };
     const token = await ensureToken(config, auth);
+    if (token.uid !== uid) throw new Error('Cloud user scope mismatch');
     const writes = operations.map((op) => ({
       update: {
-        name: docName(config, businessId, op.collection, op.id),
+        name: docName(config, uid, op.collection, op.id),
         fields: firestoreFields(op.payload, {
           kind: op.kind,
           deviceId: op.deviceId,
@@ -105,9 +106,10 @@ const ShadowCloud = (() => {
     return { token, writeResults: data.writeResults || [] };
   }
 
-  async function listCollection(config, auth, businessId, collection, pageSize = 250) {
+  async function listCollection(config, auth, uid, collection, pageSize = 250) {
     const token = await ensureToken(config, auth);
-    const url = `${apiBase(config.projectId)}/aiOperatorBusinesses/${encodeURIComponent(businessId)}/${encodeURIComponent(collection)}?pageSize=${Math.min(1000, pageSize)}`;
+    if (token.uid !== uid) throw new Error('Cloud user scope mismatch');
+    const url = `${apiBase(config.projectId)}/aiOperatorUsers/${encodeURIComponent(uid)}/${encodeURIComponent(collection)}?pageSize=${Math.min(1000, pageSize)}`;
     const response = await fetch(url, { headers: authHeaders(token.idToken) });
     const data = await response.json();
     if (!response.ok) throw new Error(data?.error?.message || `Failed to load ${collection}`);
@@ -115,11 +117,5 @@ const ShadowCloud = (() => {
     return { token, items };
   }
 
-  return {
-    signIn,
-    refresh,
-    ensureToken,
-    commit,
-    listCollection
-  };
+  return { signIn, refresh, ensureToken, commit, listCollection };
 })();
