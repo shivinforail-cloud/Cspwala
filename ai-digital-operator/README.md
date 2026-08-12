@@ -1,64 +1,110 @@
-# CSPWALA AI Digital Operator — Phase 1 MVP
+# CSPWALA AI Digital Operator — Shadow Agent v0.2
 
-This module starts the **Shadow Learning Agent**: a privacy-first Chrome extension that observes browser work, records action structure, and turns real work into reusable workflow candidates.
+The Shadow Agent is a Chrome extension that observes real browser work, learns workflow structure, keeps customer reasoning context, and can synchronize learned knowledge across multiple PCs using the same Firebase-authenticated CSPWALA account.
 
 ## What works now
 
-- Start/stop all-day observation from the extension popup.
-- Capture page views, navigation, clicks, form inputs/changes, submits, and common success/error messages.
-- **Automatic task segmentation:** when a success message is detected, or when work resumes after roughly 10 minutes of inactivity, the previous task is learned separately while the observer can remain ON all day.
-- Store data locally in `chrome.storage.local`.
-- Do **not** store typed customer values in Phase 1. Input values are replaced with markers such as `[VALUE_ENTERED]`, `[OPTION_SELECTED]`, or `[2 file(s)]`.
-- Additional redaction guard for password/OTP/Aadhaar/PAN/account-like fields.
-- Screenshot capture is OFF by default. If explicitly enabled, it is attempted only for submit/error events.
-- Build workflow candidates from completed task segments.
-- Match identical observed workflows and increase occurrence count/confidence.
-- Require manual approval before a workflow is considered trusted.
-- Dashboard for recent activity, learned workflows, approval/delete, settings, and JSON export.
+- All-day observation from the extension popup.
+- Page views, navigation, clicks, field identity, submits, success/error signals.
+- Automatic task segmentation on detected success or about 10 minutes of inactivity.
+- Local raw activity history in `chrome.storage.local`.
+- Customer reasoning contexts built from form fields for each task/segment.
+- Customer values are kept separately from click/action logs.
+- Deterministic workflow IDs so the same workflow can merge across PCs.
+- Per-device workflow occurrence counts and shared confidence.
+- Manual workflow approval before a workflow is trusted.
+- Firebase Auth + Firestore REST cloud sync.
+- Unique Device ID and editable PC/Device name.
+- Offline sync queue; the extension retries cloud sync every minute.
+- Cloud collections for devices, workflows, customer contexts, and compressed observations.
+- Screenshots remain local and are not included in cloud sync.
 
-## Install for local testing
+## Customer data behavior
 
-1. Download/clone this branch.
-2. Open Chrome and go to `chrome://extensions`.
+When **Save customer details for reasoning** is enabled, customer form values such as name, DOB, address, Aadhaar/PAN/account-related details, mobile/email, income/land/service fields can be stored in that task's customer context and synchronized to the authenticated account.
+
+The action/event log itself stores only markers such as `[VALUE_CAPTURED]`; actual values live in the customer context.
+
+The following authentication/authorization secrets are never intended to be retained as customer reasoning memory:
+
+- Login passwords/passcodes.
+- OTP / one-time password.
+- CVV/CVC.
+- UPI PIN / ATM PIN / transaction PIN / MPIN.
+- Fingerprint, iris, or biometric values.
+
+## Multi-PC model
+
+Every Chrome installation receives a unique Device ID. Example:
+
+```text
+PC 1 → device_xxx → observe + customer context + workflows
+PC 2 → device_yyy → observe + customer context + workflows
+PC 3 → device_zzz → observe + customer context + workflows
+                         ↓
+                Same Firebase login
+                         ↓
+ aiOperatorUsers/{firebaseUid}/workflows
+ aiOperatorUsers/{firebaseUid}/customers
+ aiOperatorUsers/{firebaseUid}/observations
+ aiOperatorUsers/{firebaseUid}/devices
+```
+
+Using the same Firebase-authenticated CSPWALA account on multiple PCs causes the workflow/customer knowledge to be pulled and merged locally during sync.
+
+## Chrome installation
+
+1. Download/clone this feature branch.
+2. Open `chrome://extensions`.
 3. Enable **Developer mode**.
 4. Click **Load unpacked**.
-5. Select the `ai-digital-operator/extension` folder.
+5. Select `ai-digital-operator/extension`.
 6. Pin **CSPWALA Shadow Agent**.
-7. Click **Start Observing** and continue normal browser work. Successful tasks can be learned automatically; stopping observation also learns the current unfinished segment when enough actions exist.
-8. Open **Learning Dashboard** to review captured actions and workflows.
+7. Open **Learning Dashboard**.
+
+## Enable online sync
+
+The repository does not currently contain the production CSPWALA Firebase web configuration. In the Learning Dashboard enter once per PC:
+
+- Firebase Project ID.
+- Firebase Web API Key.
+- CSPWALA/Firebase login email.
+- Password for the sign-in request (the extension does not persist the entered password).
+- A friendly PC name such as `Shop PC 1`, `Counter PC 2`, etc.
+
+Then click **Connect & Sync**.
+
+The extension stores the Firebase refresh token locally so it can continue synchronizing without asking for the password every minute.
+
+## Firestore security rule required
+
+Merge `FIRESTORE_RULES_SNIPPET.rules` into the existing CSPWALA Firestore rules before production sync. The rule scopes all Shadow Agent documents to the authenticated Firebase UID, so a user cannot read another Firebase user's Shadow Agent data.
+
+## Cloud sync strategy
+
+Raw click/input events are not uploaded one-by-one. This keeps Firestore volume and cost controlled.
+
+Cloud sync uploads:
+
+- `devices` — device identity/heartbeat.
+- `workflows` — learned workflow definitions and confidence.
+- `customers` — customer reasoning context for each task segment.
+- `observations` — compressed action sequence used as evidence for learning.
+
+The extension queues changes locally while offline and retries once per minute.
 
 ## Important behavior
 
-Phase 1 is an observer/learner, not an autonomous form submitter. It intentionally does not automate OTP, CAPTCHA, biometric, payment, declarations, or final legally significant submissions.
+The Shadow Agent is still a learner, not an autonomous final submitter. It does not automatically complete OTP, CAPTCHA, biometric, payment, declaration/consent, or final legally significant submission steps.
 
-The learning rule is:
+Learning lifecycle:
 
-`Observed task → workflow candidate → repeated observations increase confidence → human approval → trusted workflow`
+`Observed task → workflow candidate → repeated multi-PC observations → confidence → human approval → trusted workflow`
 
-A wrong click therefore does not immediately become a permanent automation rule.
+## Next step — Document Intelligence
 
-## Privacy model
+The next module should add customer/job creation and document upload/analysis so the reasoning context can combine:
 
-The Shadow Agent is designed to learn **how work is performed**, not to collect customer records. Actual customer/document intelligence belongs to Phase 2 and should use a separately controlled intake pipeline with explicit purpose, access control, retention, and audit logs.
+`Form fields + Aadhaar/PAN/7-12/etc. documents + extracted fields + mismatches + learned workflow`
 
-## Next phases
-
-### Phase 2 — Customer Intake + Document Intelligence
-- Customer/job creation.
-- Document upload and classification.
-- Extract structured fields from documents.
-- Detect missing information and mismatches.
-- Service-specific requirement checks.
-
-### Phase 3 — Portal Action Agent
-- Convert approved workflows into executable action plans.
-- Fill fields and upload documents using controlled browser/computer-use execution.
-- Pause on uncertainty, portal changes, OTP/CAPTCHA/biometric/payment, or final submission.
-
-### Phase 4 — AI Digital Operator
-- Customer request → document analysis → missing-question flow → portal execution → human approval → receipt/download/print/status tracking.
-- Keep complete audit history of what the agent read, inferred, changed, and submitted.
-
-## Production integration constraint
-
-Do not create a separate production Firebase project for this module. When integrating it into `tools.cspwala.in`, reuse only the Firebase/auth/business context already configured for that production project and add explicit user/business scoping and security rules before syncing any observer data.
+That becomes the input for the later Portal Action Agent.
