@@ -1,7 +1,8 @@
-importScripts('cloud-sync.js');
+importScripts('standalone-config.js', 'cloud-sync.js');
 
-const VERSION = '0.2.0';
+const VERSION = '0.2.2';
 const SYNC_ALARM = 'cspwala-shadow-cloud-sync';
+const ACTIVE_DEVICE_WINDOW_MS = 3 * 60 * 1000;
 
 const DEFAULTS = {
   observing: false,
@@ -12,18 +13,24 @@ const DEFAULTS = {
   lastEventAt: null,
   deviceId: null,
   deviceName: '',
+  lastLoginEmail: '',
   events: [],
   workflows: [],
   customerContexts: {},
   syncQueue: [],
-  cloudConfig: { projectId: '', apiKey: '' },
+  cloudConfig: {
+    projectId: SHADOW_AGENT_FIREBASE.projectId,
+    apiKey: SHADOW_AGENT_FIREBASE.apiKey
+  },
   cloudAuth: null,
   cloudStatus: {
-    connected: false,
+    authenticated: false,
+    synced: false,
     lastSyncedAt: null,
     lastError: null,
     pending: 0,
-    deviceCount: 0
+    deviceCount: 0,
+    activeSessionCount: 0
   },
   settings: {
     captureScreenshots: false,
@@ -31,13 +38,15 @@ const DEFAULTS = {
     captureCustomerDetails: true,
     maskCustomerDetailsInDashboard: true,
     autoSegmentMinutes: 10,
-    learnOnSuccess: true
+    learnOnSuccess: true,
+    autoStartObserverAfterConnect: true
   }
 };
 
 const NEVER_STORE_HINTS = [
   'password', 'passcode', 'login password', 'otp', 'one time password', 'cvv', 'cvc',
-  'transaction pin', 'upi pin', 'mpin', 'atm pin', 'biometric', 'fingerprint', 'iris'
+  'transaction pin', 'upi pin', 'mpin', 'atm pin', 'biometric', 'fingerprint', 'iris',
+  'access token', 'refresh token', 'auth token', 'authorization', 'secret', 'session token'
 ];
 
 const CUSTOMER_PII_HINTS = [
@@ -62,21 +71,31 @@ function hashString(value = '') {
   return (hash >>> 0).toString(36);
 }
 
-function nestedMerge(defaultValue, storedValue) {
+function mergeDefaults(defaultValue, storedValue) {
   return { ...defaultValue, ...(storedValue || {}) };
+}
+
+function fixedCloudConfig() {
+  return {
+    projectId: SHADOW_AGENT_FIREBASE.projectId,
+    apiKey: SHADOW_AGENT_FIREBASE.apiKey
+  };
 }
 
 async function getState() {
   const stored = await chrome.storage.local.get(Object.keys(DEFAULTS));
-  return {
+  const state = {
     ...DEFAULTS,
     ...stored,
-    settings: nestedMerge(DEFAULTS.settings, stored.settings),
-    cloudConfig: nestedMerge(DEFAULTS.cloudConfig, stored.cloudConfig),
-    cloudStatus: nestedMerge(DEFAULTS.cloudStatus, stored.cloudStatus),
+    settings: mergeDefaults(DEFAULTS.settings, stored.settings),
+    cloudStatus: mergeDefaults(DEFAULTS.cloudStatus, stored.cloudStatus),
     customerContexts: stored.customerContexts || {},
     syncQueue: stored.syncQueue || []
   };
+
+  // v0.2.2 is locked to the standalone Firebase project.
+  state.cloudConfig = fixedCloudConfig();
+  return state;
 }
 
 async function setState(patch) {
@@ -91,7 +110,7 @@ function eventDescriptor(event) {
 }
 
 function isNeverStoreField(event) {
-  if (event.inputType === 'password') return true;
+  if (event.inputType === 'password' || event.inputType === 'hidden') return true;
   const text = eventDescriptor(event);
   return NEVER_STORE_HINTS.some((hint) => text.includes(hint));
 }
@@ -101,12 +120,11 @@ function isCustomerPiiField(event) {
   return CUSTOMER_PII_HINTS.some((hint) => text.includes(hint));
 }
 
-function valueMarker(event) {
+function eventValueMarker(event) {
   const value = String(event.value ?? '');
   if (/^\[\d+ file\(s\)\]$/.test(value)) return value;
-  if (value === '[CHECKED]' || value === '[UNCHECKED]') return value;
-  if (!value) return '[EMPTY]';
-  return '[VALUE_CAPTURED]';
+  if (['[CHECKED]', '[UNCHECKED]'].includes(value)) return value;
+  return value ? '[VALUE_CAPTURED]' : '[EMPTY]';
 }
 
 function sanitizeEvent(rawEvent) {
@@ -116,11 +134,12 @@ function sanitizeEvent(rawEvent) {
       clean.value = '[NEVER_STORED]';
       clean.secret = true;
     } else {
-      clean.value = valueMarker(clean);
+      clean.value = eventValueMarker(clean);
       clean.customerDataCaptured = true;
       clean.sensitive = isCustomerPiiField(clean);
     }
   }
+  if (typeof clean.text === 'string' && clean.text.length > 300) clean.text = clean.text.slice(0, 300);
   return clean;
 }
 
@@ -132,8 +151,9 @@ function customerFieldFromEvent(event, settings) {
   if (!settings.captureCustomerDetails) return null;
   if (!['input', 'change'].includes(event.type)) return null;
   if (!('value' in event) || isNeverStoreField(event)) return null;
-  const value = String(event.value ?? '').trim();
+  let value = String(event.value ?? '').trim();
   if (!value || value === '[EMPTY]') return null;
+  if (value.length > 1000) value = value.slice(0, 1000);
   return {
     key: fieldKey(event),
     label: event.label || event.name || event.placeholder || event.selector || 'Field',
@@ -150,20 +170,17 @@ function deriveCustomerLabel(context) {
   const fields = Object.values(context.fields || {});
   const name = fields.find((f) => /name|नाव/i.test(f.label || ''));
   const mobile = fields.find((f) => /mobile|phone|मोबाईल|फोन/i.test(f.label || ''));
-  if (name?.value && !name.value.startsWith('[')) return String(name.value).slice(0, 80);
-  if (mobile?.value && !mobile.value.startsWith('[')) return `Customer • ${String(mobile.value).slice(-4)}`;
+  if (name?.value && !String(name.value).startsWith('[')) return String(name.value).slice(0, 80);
+  if (mobile?.value && !String(mobile.value).startsWith('[')) return `Customer • ${String(mobile.value).slice(-4)}`;
   return context.displayName || 'Customer context';
 }
 
 function actionSignature(event) {
-  const urlPath = (() => {
-    try {
-      const u = new URL(event.url || 'https://invalid.local/');
-      return `${u.hostname}${u.pathname}`.replace(/\d{4,}/g, ':id');
-    } catch {
-      return 'unknown';
-    }
-  })();
+  let urlPath = 'unknown';
+  try {
+    const u = new URL(event.url || 'https://invalid.local/');
+    urlPath = `${u.hostname}${u.pathname}`.replace(/\d{4,}/g, ':id');
+  } catch {}
   return [event.type, urlPath, event.selector || '', event.label || event.name || '']
     .join('|')
     .toLowerCase()
@@ -171,11 +188,9 @@ function actionSignature(event) {
 }
 
 function compressActions(events) {
-  const useful = events.filter((e) => [
-    'page_view', 'navigation', 'click', 'input', 'change', 'submit', 'download', 'error', 'success'
-  ].includes(e.type));
+  const usefulTypes = new Set(['page_view', 'navigation', 'click', 'input', 'change', 'submit', 'download', 'error', 'success']);
   const result = [];
-  for (const event of useful) {
+  for (const event of events.filter((e) => usefulTypes.has(e.type))) {
     const signature = actionSignature(event);
     const previous = result[result.length - 1];
     if (previous && previous.signature === signature && event.type === 'input') {
@@ -214,18 +229,8 @@ function workflowTitle(events, actions) {
 
 function queueOperation(state, collection, id, kind, payload) {
   const opKey = `${collection}:${id}`;
-  const op = {
-    opKey,
-    collection,
-    id,
-    kind,
-    payload,
-    deviceId: state.deviceId,
-    updatedAt: nowIso()
-  };
-  const queue = (state.syncQueue || []).filter((item) => item.opKey !== opKey);
-  queue.push(op);
-  state.syncQueue = queue.slice(-3000);
+  const op = { opKey, collection, id, kind, payload, deviceId: state.deviceId, updatedAt: nowIso() };
+  state.syncQueue = [...(state.syncQueue || []).filter((item) => item.opKey !== opKey), op].slice(-3000);
 }
 
 function mergeCountMaps(a = {}, b = {}) {
@@ -252,24 +257,54 @@ function mergeWorkflow(local, remote) {
     occurrencesByDevice,
     occurrences,
     status: approved ? 'approved' : 'observed',
-    confidence: approved ? Math.max(.9, Number(local.confidence || 0), Number(remote.confidence || 0))
+    confidence: approved
+      ? Math.max(.9, Number(local.confidence || 0), Number(remote.confidence || 0))
       : Math.min(.95, .35 + occurrences * .12)
   };
 }
 
 function publicCloudStatus(state) {
   return {
-    connected: Boolean(state.cloudAuth?.refreshToken && state.cloudConfig?.projectId && state.cloudConfig?.apiKey),
-    email: state.cloudAuth?.email || null,
+    authenticated: Boolean(state.cloudAuth?.refreshToken && state.cloudAuth?.uid),
+    synced: Boolean(state.cloudStatus?.synced && state.cloudStatus?.lastSyncedAt),
+    email: state.cloudAuth?.email || state.lastLoginEmail || null,
     uid: state.cloudAuth?.uid || null,
-    projectId: state.cloudConfig?.projectId || '',
+    projectId: SHADOW_AGENT_FIREBASE.projectId,
     deviceId: state.deviceId,
     deviceName: state.deviceName,
     lastSyncedAt: state.cloudStatus?.lastSyncedAt || null,
     lastError: state.cloudStatus?.lastError || null,
     pending: (state.syncQueue || []).length,
-    deviceCount: Number(state.cloudStatus?.deviceCount || 0)
+    deviceCount: Number(state.cloudStatus?.deviceCount || 0),
+    activeSessionCount: Number(state.cloudStatus?.activeSessionCount || 0),
+    observing: Boolean(state.observing),
+    sessionId: state.sessionId || null,
+    sessionStartedAt: state.sessionStartedAt || null
   };
+}
+
+async function ensureDeviceIdentity() {
+  const state = await getState();
+  const patch = {};
+  if (!state.deviceId) patch.deviceId = `device_${hashString(`${Date.now()}_${Math.random()}_${navigator.userAgent}`)}`;
+  if (!state.deviceName) patch.deviceName = `PC ${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+  if (Object.keys(patch).length) await setState(patch);
+  return { ...state, ...patch };
+}
+
+function queueDeviceHeartbeat(state) {
+  const device = {
+    id: state.deviceId,
+    name: state.deviceName,
+    version: VERSION,
+    observing: Boolean(state.observing),
+    activeSessionId: state.sessionId || null,
+    sessionStartedAt: state.sessionStartedAt || null,
+    activeSegmentId: state.segmentId || null,
+    lastActivityAt: state.lastEventAt || null,
+    lastSeenAt: nowIso()
+  };
+  queueOperation(state, 'devices', state.deviceId, 'device', device);
 }
 
 async function saveCustomerField(state, segmentId, rawEvent) {
@@ -311,9 +346,7 @@ async function learnFromSegment(segmentId, reason = 'manual') {
   const fingerprint = workflowFingerprint(actions);
   const id = workflowIdForFingerprint(fingerprint);
   const existingIndex = state.workflows.findIndex((w) => w.fingerprint === fingerprint || w.id === id);
-  const hostname = (() => {
-    try { return new URL(actions[0].url).hostname; } catch { return 'Unknown website'; }
-  })();
+  const hostname = (() => { try { return new URL(actions[0].url).hostname; } catch { return 'Unknown website'; } })();
   const title = workflowTitle(segmentEvents, actions);
   const old = existingIndex >= 0 ? state.workflows[existingIndex] : null;
   const counts = { ...(old?.occurrencesByDevice || {}) };
@@ -342,18 +375,12 @@ async function learnFromSegment(segmentId, reason = 'manual') {
 
   const customer = state.customerContexts[segmentId];
   if (customer) {
-    const completedCustomer = {
-      ...customer,
-      status: 'completed',
-      workflowId: id,
-      completedAt: nowIso(),
-      updatedAt: nowIso()
-    };
+    const completedCustomer = { ...customer, status: 'completed', workflowId: id, completedAt: nowIso(), updatedAt: nowIso() };
     state.customerContexts = { ...state.customerContexts, [segmentId]: completedCustomer };
     queueOperation(state, 'customers', segmentId, 'customer', completedCustomer);
   }
 
-  const observation = {
+  queueOperation(state, 'observations', segmentId, 'observation', {
     id: segmentId,
     segmentId,
     sessionId: segmentEvents[0]?.sessionId || state.sessionId,
@@ -365,8 +392,7 @@ async function learnFromSegment(segmentId, reason = 'manual') {
     host: hostname,
     title,
     actions
-  };
-  queueOperation(state, 'observations', segmentId, 'observation', observation);
+  });
 
   await setState({
     workflows: state.workflows,
@@ -377,12 +403,165 @@ async function learnFromSegment(segmentId, reason = 'manual') {
   return workflow;
 }
 
+function mergeRemoteData(state, remoteWorkflows, remoteCustomers) {
+  let workflows = [...state.workflows];
+  for (const item of remoteWorkflows) {
+    const remote = item.payload;
+    const index = workflows.findIndex((w) => w.id === remote.id || (w.fingerprint && w.fingerprint === remote.fingerprint));
+    const merged = mergeWorkflow(index >= 0 ? workflows[index] : null, remote);
+    if (index >= 0) workflows[index] = merged;
+    else workflows.push(merged);
+  }
+
+  const customerContexts = { ...state.customerContexts };
+  for (const item of remoteCustomers) {
+    const remote = item.payload;
+    const local = customerContexts[remote.id];
+    if (!local || new Date(remote.updatedAt || 0) > new Date(local.updatedAt || 0)) customerContexts[remote.id] = remote;
+  }
+
+  workflows.sort((a, b) => new Date(b.lastObservedAt || 0) - new Date(a.lastObservedAt || 0));
+  return { workflows: workflows.slice(0, 250), customerContexts };
+}
+
+async function syncNow() {
+  let state = await ensureDeviceIdentity();
+  if (!state.cloudAuth?.refreshToken || !state.cloudAuth?.uid) {
+    state.cloudStatus = { ...state.cloudStatus, authenticated: false, synced: false, lastError: 'Firebase account is not signed in.' };
+    await setState({ cloudStatus: state.cloudStatus, cloudConfig: fixedCloudConfig() });
+    return { ok: false, skipped: true, error: state.cloudStatus.lastError, status: publicCloudStatus(state) };
+  }
+
+  try {
+    state.cloudAuth = await ShadowCloud.ensureToken(fixedCloudConfig(), state.cloudAuth);
+    const uidScope = state.cloudAuth.uid;
+
+    const [remoteWorkflowResult, remoteCustomerResult, remoteDeviceResult] = await Promise.all([
+      ShadowCloud.listCollection(fixedCloudConfig(), state.cloudAuth, uidScope, 'workflows', 250),
+      ShadowCloud.listCollection(fixedCloudConfig(), state.cloudAuth, uidScope, 'customers', 500),
+      ShadowCloud.listCollection(fixedCloudConfig(), state.cloudAuth, uidScope, 'devices', 100)
+    ]);
+
+    const merged = mergeRemoteData(state, remoteWorkflowResult.items, remoteCustomerResult.items);
+    state.workflows = merged.workflows;
+    state.customerContexts = merged.customerContexts;
+
+    queueDeviceHeartbeat(state);
+    const batch = state.syncQueue.slice(0, 100);
+    if (batch.length) {
+      const result = await ShadowCloud.commit(fixedCloudConfig(), state.cloudAuth, uidScope, batch);
+      state.cloudAuth = { ...state.cloudAuth, ...result.token };
+      const completed = new Set(batch.map((op) => op.opKey));
+      state.syncQueue = state.syncQueue.filter((op) => !completed.has(op.opKey));
+    }
+
+    const remoteDevices = remoteDeviceResult.items.map((item) => item.payload).filter(Boolean);
+    const deviceIds = new Set(remoteDevices.map((d) => d.id).filter(Boolean));
+    deviceIds.add(state.deviceId);
+
+    const now = Date.now();
+    let activeSessionCount = remoteDevices.filter((d) => {
+      const fresh = now - new Date(d.lastSeenAt || 0).getTime() <= ACTIVE_DEVICE_WINDOW_MS;
+      return fresh && d.observing && d.activeSessionId;
+    }).length;
+    if (state.observing && state.sessionId && !remoteDevices.some((d) => d.id === state.deviceId && d.observing && d.activeSessionId)) {
+      activeSessionCount += 1;
+    }
+
+    state.cloudStatus = {
+      authenticated: true,
+      synced: true,
+      lastSyncedAt: nowIso(),
+      lastError: null,
+      pending: state.syncQueue.length,
+      deviceCount: deviceIds.size,
+      activeSessionCount
+    };
+
+    await setState({
+      cloudConfig: fixedCloudConfig(),
+      cloudAuth: state.cloudAuth,
+      cloudStatus: state.cloudStatus,
+      workflows: state.workflows,
+      customerContexts: state.customerContexts,
+      syncQueue: state.syncQueue,
+      deviceId: state.deviceId,
+      deviceName: state.deviceName
+    });
+    return { ok: true, status: publicCloudStatus(state) };
+  } catch (error) {
+    state.cloudStatus = {
+      ...state.cloudStatus,
+      authenticated: Boolean(state.cloudAuth?.refreshToken),
+      synced: false,
+      lastError: error?.message || String(error),
+      pending: state.syncQueue.length
+    };
+    await setState({ cloudStatus: state.cloudStatus, cloudConfig: fixedCloudConfig() });
+    return { ok: false, error: state.cloudStatus.lastError, status: publicCloudStatus(state) };
+  }
+}
+
+async function connectCloud(email, password, deviceName) {
+  if (!email || !password) throw new Error('Firebase login email and password are required');
+  let state = await ensureDeviceIdentity();
+  const auth = await ShadowCloud.signIn(fixedCloudConfig(), email.trim(), password);
+  state = {
+    ...state,
+    cloudConfig: fixedCloudConfig(),
+    cloudAuth: auth,
+    lastLoginEmail: auth.email || email.trim(),
+    deviceName: String(deviceName || state.deviceName || '').trim() || state.deviceName
+  };
+  await setState({
+    cloudConfig: fixedCloudConfig(),
+    cloudAuth: auth,
+    lastLoginEmail: state.lastLoginEmail,
+    deviceName: state.deviceName,
+    cloudStatus: { ...state.cloudStatus, authenticated: true, synced: false, lastError: null }
+  });
+  return syncNow();
+}
+
+async function startObserving() {
+  const state = await ensureDeviceIdentity();
+  if (state.observing && state.sessionId) return { ok: true, alreadyActive: true, sessionId: state.sessionId };
+  const startedAt = nowIso();
+  const sessionId = uid(`session_${state.deviceId}`);
+  const segmentId = uid(`segment_${state.deviceId}`);
+  await setState({
+    observing: true,
+    sessionId,
+    sessionStartedAt: startedAt,
+    segmentId,
+    segmentStartedAt: startedAt,
+    lastEventAt: null
+  });
+  const sync = await syncNow();
+  return { ok: true, sessionId, segmentId, sync };
+}
+
+async function stopObserving() {
+  const state = await getState();
+  const workflow = state.segmentId ? await learnFromSegment(state.segmentId, 'observer_stopped') : null;
+  await setState({
+    observing: false,
+    sessionId: null,
+    sessionStartedAt: null,
+    segmentId: null,
+    segmentStartedAt: null,
+    lastEventAt: null
+  });
+  const sync = await syncNow();
+  return { ok: true, workflow, sync };
+}
+
 async function appendEvent(rawEvent, sender) {
   let state = await getState();
-  if (!state.observing || !state.sessionId) return { ignored: true };
+  if (!state.observing || !state.sessionId) return { ignored: true, reason: 'observer_off' };
 
   const eventAt = rawEvent.at || nowIso();
-  let segmentId = state.segmentId || uid('segment');
+  let segmentId = state.segmentId || uid(`segment_${state.deviceId}`);
   let segmentStartedAt = state.segmentStartedAt || eventAt;
 
   if (state.lastEventAt) {
@@ -391,14 +570,13 @@ async function appendEvent(rawEvent, sender) {
     if (gapMs > gapLimitMs) {
       await learnFromSegment(segmentId, 'inactivity_gap');
       state = await getState();
-      segmentId = uid('segment');
+      segmentId = uid(`segment_${state.deviceId}`);
       segmentStartedAt = eventAt;
     }
   }
 
   rawEvent = { ...rawEvent, at: eventAt, sessionId: state.sessionId, segmentId, tabId: sender?.tab?.id ?? null };
   state = await saveCustomerField(state, segmentId, rawEvent);
-
   const event = sanitizeEvent({ ...rawEvent, id: uid('evt') });
   const events = [...state.events, event];
   const maxEvents = Math.max(500, Number(state.settings.maxEvents || 8000));
@@ -423,154 +601,24 @@ async function appendEvent(rawEvent, sender) {
         target.screenshot = dataUrl;
         await setState({ events: refreshed.events });
       }
-    } catch (err) {
-      console.warn('Screenshot capture skipped:', err?.message || err);
-    }
+    } catch {}
   }
 
   if (event.type === 'success' && state.settings.learnOnSuccess !== false) {
     const workflow = await learnFromSegment(segmentId, 'success_detected');
     if (workflow) {
-      await setState({
-        segmentId: uid('segment'),
-        segmentStartedAt: nowIso(),
-        lastEventAt: eventAt
-      });
+      await setState({ segmentId: uid(`segment_${state.deviceId}`), segmentStartedAt: nowIso(), lastEventAt: eventAt });
       syncNow().catch(() => {});
     }
   }
-
   return { ok: true, id: event.id };
-}
-
-async function ensureDeviceIdentity() {
-  const state = await getState();
-  const patch = {};
-  if (!state.deviceId) patch.deviceId = `device_${hashString(`${Date.now()}_${Math.random()}_${navigator.userAgent}`)}`;
-  if (!state.deviceName) patch.deviceName = `PC ${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
-  if (Object.keys(patch).length) await setState(patch);
-  return { ...state, ...patch };
-}
-
-function mergeRemoteData(state, remoteWorkflows, remoteCustomers) {
-  let workflows = [...state.workflows];
-  for (const item of remoteWorkflows) {
-    const remote = item.payload;
-    const index = workflows.findIndex((w) => w.id === remote.id || (w.fingerprint && w.fingerprint === remote.fingerprint));
-    const local = index >= 0 ? workflows[index] : null;
-    const merged = mergeWorkflow(local, remote);
-    if (index >= 0) workflows[index] = merged;
-    else workflows.push(merged);
-    if (JSON.stringify(merged) !== JSON.stringify(remote)) {
-      queueOperation(state, 'workflows', merged.id, 'workflow', merged);
-    }
-  }
-
-  const customerContexts = { ...state.customerContexts };
-  for (const item of remoteCustomers) {
-    const remote = item.payload;
-    const local = customerContexts[remote.id];
-    if (!local || new Date(remote.updatedAt || 0) > new Date(local.updatedAt || 0)) {
-      customerContexts[remote.id] = remote;
-    }
-  }
-
-  workflows.sort((a, b) => new Date(b.lastObservedAt || 0) - new Date(a.lastObservedAt || 0));
-  return { workflows: workflows.slice(0, 250), customerContexts };
-}
-
-async function syncNow() {
-  let state = await ensureDeviceIdentity();
-  if (!state.cloudConfig?.projectId || !state.cloudConfig?.apiKey || !state.cloudAuth?.refreshToken || !state.cloudAuth?.uid) {
-    return { ok: false, skipped: true, status: publicCloudStatus(state) };
-  }
-
-  try {
-    const auth = await ShadowCloud.ensureToken(state.cloudConfig, state.cloudAuth);
-    state.cloudAuth = { ...state.cloudAuth, ...auth };
-    const uidScope = state.cloudAuth.uid;
-
-    const [remoteWorkflowResult, remoteCustomerResult, remoteDeviceResult] = await Promise.all([
-      ShadowCloud.listCollection(state.cloudConfig, state.cloudAuth, uidScope, 'workflows', 250),
-      ShadowCloud.listCollection(state.cloudConfig, state.cloudAuth, uidScope, 'customers', 500),
-      ShadowCloud.listCollection(state.cloudConfig, state.cloudAuth, uidScope, 'devices', 100)
-    ]);
-
-    const merged = mergeRemoteData(state, remoteWorkflowResult.items, remoteCustomerResult.items);
-    state.workflows = merged.workflows;
-    state.customerContexts = merged.customerContexts;
-
-    const device = {
-      id: state.deviceId,
-      name: state.deviceName,
-      version: VERSION,
-      observing: Boolean(state.observing),
-      lastSeenAt: nowIso()
-    };
-    queueOperation(state, 'devices', state.deviceId, 'device', device);
-
-    const batch = state.syncQueue.slice(0, 100);
-    if (batch.length) {
-      const result = await ShadowCloud.commit(state.cloudConfig, state.cloudAuth, uidScope, batch);
-      state.cloudAuth = { ...state.cloudAuth, ...result.token };
-      const completed = new Set(batch.map((op) => op.opKey));
-      state.syncQueue = state.syncQueue.filter((op) => !completed.has(op.opKey));
-    }
-
-    const knownDevices = new Set(remoteDeviceResult.items.map((item) => item.payload?.id).filter(Boolean));
-    knownDevices.add(state.deviceId);
-    state.cloudStatus = {
-      connected: true,
-      lastSyncedAt: nowIso(),
-      lastError: null,
-      pending: state.syncQueue.length,
-      deviceCount: knownDevices.size
-    };
-
-    await setState({
-      cloudAuth: state.cloudAuth,
-      cloudStatus: state.cloudStatus,
-      workflows: state.workflows,
-      customerContexts: state.customerContexts,
-      syncQueue: state.syncQueue,
-      deviceId: state.deviceId,
-      deviceName: state.deviceName
-    });
-    return { ok: true, status: publicCloudStatus(state) };
-  } catch (error) {
-    state.cloudStatus = {
-      ...state.cloudStatus,
-      connected: Boolean(state.cloudAuth?.refreshToken),
-      lastError: error?.message || String(error),
-      pending: state.syncQueue.length
-    };
-    await setState({ cloudStatus: state.cloudStatus });
-    return { ok: false, error: state.cloudStatus.lastError, status: publicCloudStatus(state) };
-  }
-}
-
-async function connectCloud(config, email, password, deviceName) {
-  if (!config?.projectId || !config?.apiKey || !email || !password) {
-    throw new Error('Project ID, API key, email and password are required');
-  }
-  let state = await ensureDeviceIdentity();
-  const cloudConfig = { projectId: config.projectId.trim(), apiKey: config.apiKey.trim() };
-  const auth = await ShadowCloud.signIn(cloudConfig, email.trim(), password);
-  state = { ...state, cloudConfig, cloudAuth: auth, deviceName: (deviceName || state.deviceName || '').trim() };
-  await setState({
-    cloudConfig,
-    cloudAuth: auth,
-    deviceName: state.deviceName,
-    cloudStatus: { ...state.cloudStatus, connected: true, lastError: null }
-  });
-  return syncNow();
 }
 
 async function disconnectCloud() {
   const state = await getState();
   await setState({
     cloudAuth: null,
-    cloudStatus: { ...state.cloudStatus, connected: false, lastError: null }
+    cloudStatus: { ...state.cloudStatus, authenticated: false, synced: false, lastError: null }
   });
   return { ok: true };
 }
@@ -580,9 +628,11 @@ function setupSyncAlarm() {
 }
 
 chrome.runtime.onInstalled.addListener(async () => {
-  await ensureDeviceIdentity();
+  const state = await ensureDeviceIdentity();
+  await setState({ cloudConfig: fixedCloudConfig(), cloudStatus: mergeDefaults(DEFAULTS.cloudStatus, state.cloudStatus) });
   setupSyncAlarm();
 });
+
 chrome.runtime.onStartup.addListener(() => setupSyncAlarm());
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === SYNC_ALARM) syncNow().catch(() => {});
@@ -590,53 +640,31 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
-    if (!message || !message.type) return sendResponse({ ok: false, error: 'Invalid message' });
+    if (!message?.type) return sendResponse({ ok: false, error: 'Invalid message' });
 
     if (message.type === 'SHADOW_EVENT') return sendResponse(await appendEvent(message.event || {}, sender));
     if (message.type === 'GET_STATE') {
       const state = await ensureDeviceIdentity();
-      return sendResponse({ ...state, cloudAuth: state.cloudAuth ? { uid: state.cloudAuth.uid, email: state.cloudAuth.email } : null });
+      return sendResponse({
+        ...state,
+        cloudConfig: fixedCloudConfig(),
+        cloudAuth: state.cloudAuth ? { uid: state.cloudAuth.uid, email: state.cloudAuth.email } : null
+      });
     }
-    if (message.type === 'GET_CLOUD_STATUS') {
-      const state = await getState();
-      return sendResponse(publicCloudStatus(state));
-    }
+    if (message.type === 'GET_CLOUD_STATUS') return sendResponse(publicCloudStatus(await getState()));
     if (message.type === 'CLOUD_CONNECT') {
-      return sendResponse(await connectCloud(message.config || {}, message.email || '', message.password || '', message.deviceName || ''));
+      const result = await connectCloud(message.email || '', message.password || '', message.deviceName || '');
+      const state = await getState();
+      if (result.ok && state.settings.autoStartObserverAfterConnect !== false && !state.observing) {
+        const observer = await startObserving();
+        return sendResponse({ ...result, observerStarted: true, observer });
+      }
+      return sendResponse(result);
     }
     if (message.type === 'CLOUD_DISCONNECT') return sendResponse(await disconnectCloud());
     if (message.type === 'SYNC_NOW') return sendResponse(await syncNow());
-
-    if (message.type === 'START_OBSERVING') {
-      const state = await ensureDeviceIdentity();
-      const startedAt = nowIso();
-      const sessionId = uid('session');
-      const segmentId = uid(`segment_${state.deviceId}`);
-      await setState({
-        observing: true,
-        sessionId,
-        sessionStartedAt: startedAt,
-        segmentId,
-        segmentStartedAt: startedAt,
-        lastEventAt: null
-      });
-      return sendResponse({ ok: true, sessionId, segmentId });
-    }
-
-    if (message.type === 'STOP_OBSERVING') {
-      const state = await getState();
-      const workflow = state.segmentId ? await learnFromSegment(state.segmentId, 'observer_stopped') : null;
-      await setState({
-        observing: false,
-        sessionId: null,
-        sessionStartedAt: null,
-        segmentId: null,
-        segmentStartedAt: null,
-        lastEventAt: null
-      });
-      syncNow().catch(() => {});
-      return sendResponse({ ok: true, workflow });
-    }
+    if (message.type === 'START_OBSERVING') return sendResponse(await startObserving());
+    if (message.type === 'STOP_OBSERVING') return sendResponse(await stopObserving());
 
     if (message.type === 'UPDATE_SETTINGS') {
       const state = await getState();
