@@ -1,4 +1,5 @@
 const FIXED_FIREBASE_CONFIG = SHADOW_AGENT_FIREBASE;
+const EMAIL_PREF_KEY = 'shadowAgentLoginEmail';
 
 async function send(type, extra = {}) {
   return chrome.runtime.sendMessage({ type, ...extra });
@@ -106,10 +107,36 @@ function setInputIfIdle(id, value) {
   if (el && document.activeElement !== el) el.value = value || '';
 }
 
+function setInputOnlyWhenEmpty(id, value) {
+  const el = document.getElementById(id);
+  if (!el || document.activeElement === el) return;
+  if (!String(el.value || '').trim() && value) el.value = value;
+}
+
+function rememberedEmail(state) {
+  return state.cloudAuth?.email || state.lastLoginEmail || localStorage.getItem(EMAIL_PREF_KEY) || '';
+}
+
 function setStatusMessage(text, mode = 'warn') {
   const el = document.getElementById('cloudError');
   el.textContent = text;
   el.className = `statusmsg ${mode}`;
+}
+
+function applyAuthControls(authenticated) {
+  const connect = document.getElementById('connectCloud');
+  const sync = document.getElementById('syncNow');
+  const disconnect = document.getElementById('disconnectCloud');
+  const password = document.getElementById('cloudPassword');
+  const email = document.getElementById('cloudEmail');
+
+  connect.hidden = authenticated;
+  sync.hidden = !authenticated;
+  disconnect.hidden = !authenticated;
+  sync.disabled = !authenticated;
+  disconnect.disabled = !authenticated;
+  password.closest('.field').hidden = authenticated;
+  email.readOnly = authenticated;
 }
 
 async function render() {
@@ -128,6 +155,7 @@ async function render() {
   const synced = Boolean(authenticated && state.cloudStatus?.synced && state.cloudStatus?.lastSyncedAt && !state.cloudStatus?.lastError);
   const activeSessions = Number(state.cloudStatus?.activeSessionCount || (state.observing ? 1 : 0));
   const syncedPcs = Number(state.cloudStatus?.deviceCount || (authenticated ? 1 : 0));
+  const emailValue = rememberedEmail(state);
 
   document.getElementById('metricStatus').textContent = state.observing ? 'ON' : 'OFF';
   document.getElementById('metricEvents').textContent = events.length;
@@ -178,12 +206,12 @@ async function render() {
     cloudChip.textContent = 'AUTHENTICATED';
     cloudChip.className = 'chip warn';
   } else {
-    cloudChip.textContent = 'NOT SIGNED IN';
+    cloudChip.textContent = 'SIGN IN REQUIRED';
     cloudChip.className = 'chip bad';
   }
 
   document.getElementById('cloudDevice').textContent = `${state.deviceName || 'This PC'} (${shortId(state.deviceId)})`;
-  document.getElementById('cloudAccount').textContent = state.cloudAuth?.email || state.lastLoginEmail || 'Not signed in';
+  document.getElementById('cloudAccount').textContent = authenticated ? emailValue : (emailValue || 'Not signed in');
   document.getElementById('cloudAuthState').textContent = authenticated ? 'YES' : 'NO';
   document.getElementById('cloudSyncState').textContent = synced ? 'YES' : 'NO';
   document.getElementById('cloudActiveSessions').textContent = String(activeSessions);
@@ -194,20 +222,26 @@ async function render() {
   setInputIfIdle('deviceName', state.deviceName || '');
   setInputIfIdle('projectId', FIXED_FIREBASE_CONFIG.projectId);
   setInputIfIdle('apiKey', FIXED_FIREBASE_CONFIG.apiKey);
-  setInputIfIdle('cloudEmail', state.cloudAuth?.email || state.lastLoginEmail || '');
+  setInputOnlyWhenEmpty('cloudEmail', emailValue);
+  applyAuthControls(authenticated);
 
-  if (state.cloudStatus?.lastError) {
+  if (authenticated && state.cloudStatus?.lastError) {
     setStatusMessage(`Sync error: ${state.cloudStatus.lastError}`, 'bad');
   } else if (synced && state.observing) {
     setStatusMessage(`✅ Signed in, Firestore synced and session ACTIVE. Last sync: ${friendlyTime(state.cloudStatus.lastSyncedAt)}`, 'ok');
   } else if (synced) {
     setStatusMessage('✅ Firebase sign-in and Firestore sync successful. Observer is currently OFF.', 'ok');
   } else if (authenticated) {
-    setStatusMessage('Firebase Authentication successful, but Firestore sync has not completed yet. Click Sync Now.', 'warn');
+    setStatusMessage('Firebase Authentication successful. Firestore sync pending; Sync Now वापरा.', 'warn');
   } else {
-    setStatusMessage('Firebase account sign-in बाकी आहे. Email + password देऊन Connect, Sync & Start दाबा.', 'warn');
+    setStatusMessage('पहिल्यांदा Firebase login आवश्यक आहे. Email + password देऊन Connect, Sync & Start दाबा. Successful login नंतर auto-sync password शिवाय चालू राहील.', 'warn');
   }
 }
+
+document.getElementById('cloudEmail').addEventListener('input', (event) => {
+  const email = event.target.value.trim();
+  if (email) localStorage.setItem(EMAIL_PREF_KEY, email);
+});
 
 document.getElementById('toggleObserver').addEventListener('click', async () => {
   const button = document.getElementById('toggleObserver');
@@ -246,16 +280,17 @@ document.getElementById('connectCloud').addEventListener('click', async () => {
   try {
     const email = document.getElementById('cloudEmail').value.trim();
     const password = document.getElementById('cloudPassword').value;
-    if (!email) throw new Error('Firebase Login Email टाका. Project ID दिसणे म्हणजे account connected झालेले नाही.');
+    if (!email) throw new Error('Firebase Login Email टाका.');
     if (!password) throw new Error('Firebase Authentication password टाका.');
+    localStorage.setItem(EMAIL_PREF_KEY, email);
 
     const result = await send('CLOUD_CONNECT', {
       email,
       password,
       deviceName: document.getElementById('deviceName').value.trim()
     });
-    document.getElementById('cloudPassword').value = '';
     if (!result?.ok) throw new Error(result?.error || 'Firebase connection failed');
+    document.getElementById('cloudPassword').value = '';
     setStatusMessage(result.observerStarted
       ? '✅ Firebase connected, Firestore synced आणि Observer automatically ACTIVE झाला.'
       : '✅ Firebase connected and Firestore synced.', 'ok');
@@ -268,6 +303,11 @@ document.getElementById('connectCloud').addEventListener('click', async () => {
 });
 
 document.getElementById('syncNow').addEventListener('click', async () => {
+  const state = await send('GET_STATE');
+  if (!state.cloudAuth?.uid) {
+    setStatusMessage('Sync करण्यापूर्वी Firebase account ला Connect करा.', 'bad');
+    return;
+  }
   setStatusMessage('Syncing with Firestore...', 'warn');
   try {
     const name = document.getElementById('deviceName').value.trim();
@@ -312,7 +352,7 @@ document.getElementById('exportJson').addEventListener('click', async () => {
   const payload = {
     exportedAt: new Date().toISOString(),
     product: 'CSPWALA Shadow Agent',
-    version: '0.2.2',
+    version: '0.2.3',
     deviceId: state.deviceId,
     deviceName: state.deviceName,
     settings: state.settings,
