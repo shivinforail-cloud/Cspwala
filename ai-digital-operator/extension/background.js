@@ -1,6 +1,6 @@
 importScripts('standalone-config.js', 'cloud-sync.js');
 
-const VERSION = '0.2.2';
+const VERSION = '0.2.3';
 const SYNC_ALARM = 'cspwala-shadow-cloud-sync';
 const ACTIVE_DEVICE_WINDOW_MS = 3 * 60 * 1000;
 
@@ -45,8 +45,7 @@ const DEFAULTS = {
 
 const NEVER_STORE_HINTS = [
   'password', 'passcode', 'login password', 'otp', 'one time password', 'cvv', 'cvc',
-  'transaction pin', 'upi pin', 'mpin', 'atm pin', 'biometric', 'fingerprint', 'iris',
-  'access token', 'refresh token', 'auth token', 'authorization', 'secret', 'session token'
+  'transaction pin', 'upi pin', 'mpin', 'atm pin', 'biometric', 'fingerprint', 'iris'
 ];
 
 const CUSTOMER_PII_HINTS = [
@@ -76,26 +75,20 @@ function mergeDefaults(defaultValue, storedValue) {
 }
 
 function fixedCloudConfig() {
-  return {
-    projectId: SHADOW_AGENT_FIREBASE.projectId,
-    apiKey: SHADOW_AGENT_FIREBASE.apiKey
-  };
+  return { projectId: SHADOW_AGENT_FIREBASE.projectId, apiKey: SHADOW_AGENT_FIREBASE.apiKey };
 }
 
 async function getState() {
   const stored = await chrome.storage.local.get(Object.keys(DEFAULTS));
-  const state = {
+  return {
     ...DEFAULTS,
     ...stored,
     settings: mergeDefaults(DEFAULTS.settings, stored.settings),
+    cloudConfig: fixedCloudConfig(),
     cloudStatus: mergeDefaults(DEFAULTS.cloudStatus, stored.cloudStatus),
     customerContexts: stored.customerContexts || {},
     syncQueue: stored.syncQueue || []
   };
-
-  // v0.2.2 is locked to the standalone Firebase project.
-  state.cloudConfig = fixedCloudConfig();
-  return state;
 }
 
 async function setState(patch) {
@@ -110,7 +103,7 @@ function eventDescriptor(event) {
 }
 
 function isNeverStoreField(event) {
-  if (event.inputType === 'password' || event.inputType === 'hidden') return true;
+  if (event.inputType === 'password') return true;
   const text = eventDescriptor(event);
   return NEVER_STORE_HINTS.some((hint) => text.includes(hint));
 }
@@ -120,11 +113,12 @@ function isCustomerPiiField(event) {
   return CUSTOMER_PII_HINTS.some((hint) => text.includes(hint));
 }
 
-function eventValueMarker(event) {
+function valueMarker(event) {
   const value = String(event.value ?? '');
   if (/^\[\d+ file\(s\)\]$/.test(value)) return value;
-  if (['[CHECKED]', '[UNCHECKED]'].includes(value)) return value;
-  return value ? '[VALUE_CAPTURED]' : '[EMPTY]';
+  if (value === '[CHECKED]' || value === '[UNCHECKED]') return value;
+  if (!value) return '[EMPTY]';
+  return '[VALUE_CAPTURED]';
 }
 
 function sanitizeEvent(rawEvent) {
@@ -134,12 +128,11 @@ function sanitizeEvent(rawEvent) {
       clean.value = '[NEVER_STORED]';
       clean.secret = true;
     } else {
-      clean.value = eventValueMarker(clean);
+      clean.value = valueMarker(clean);
       clean.customerDataCaptured = true;
       clean.sensitive = isCustomerPiiField(clean);
     }
   }
-  if (typeof clean.text === 'string' && clean.text.length > 300) clean.text = clean.text.slice(0, 300);
   return clean;
 }
 
@@ -151,15 +144,14 @@ function customerFieldFromEvent(event, settings) {
   if (!settings.captureCustomerDetails) return null;
   if (!['input', 'change'].includes(event.type)) return null;
   if (!('value' in event) || isNeverStoreField(event)) return null;
-  let value = String(event.value ?? '').trim();
+  const value = String(event.value ?? '').trim();
   if (!value || value === '[EMPTY]') return null;
-  if (value.length > 1000) value = value.slice(0, 1000);
   return {
     key: fieldKey(event),
     label: event.label || event.name || event.placeholder || event.selector || 'Field',
     name: event.name || null,
     inputType: event.inputType || null,
-    value,
+    value: value.slice(0, 1000),
     sensitive: isCustomerPiiField(event),
     sourceUrl: event.url || null,
     updatedAt: event.at || nowIso()
@@ -170,17 +162,20 @@ function deriveCustomerLabel(context) {
   const fields = Object.values(context.fields || {});
   const name = fields.find((f) => /name|नाव/i.test(f.label || ''));
   const mobile = fields.find((f) => /mobile|phone|मोबाईल|फोन/i.test(f.label || ''));
-  if (name?.value && !String(name.value).startsWith('[')) return String(name.value).slice(0, 80);
-  if (mobile?.value && !String(mobile.value).startsWith('[')) return `Customer • ${String(mobile.value).slice(-4)}`;
+  if (name?.value && !name.value.startsWith('[')) return String(name.value).slice(0, 80);
+  if (mobile?.value && !mobile.value.startsWith('[')) return `Customer • ${String(mobile.value).slice(-4)}`;
   return context.displayName || 'Customer context';
 }
 
 function actionSignature(event) {
-  let urlPath = 'unknown';
-  try {
-    const u = new URL(event.url || 'https://invalid.local/');
-    urlPath = `${u.hostname}${u.pathname}`.replace(/\d{4,}/g, ':id');
-  } catch {}
+  const urlPath = (() => {
+    try {
+      const u = new URL(event.url || 'https://invalid.local/');
+      return `${u.hostname}${u.pathname}`.replace(/\d{4,}/g, ':id');
+    } catch {
+      return 'unknown';
+    }
+  })();
   return [event.type, urlPath, event.selector || '', event.label || event.name || '']
     .join('|')
     .toLowerCase()
@@ -188,9 +183,11 @@ function actionSignature(event) {
 }
 
 function compressActions(events) {
-  const usefulTypes = new Set(['page_view', 'navigation', 'click', 'input', 'change', 'submit', 'download', 'error', 'success']);
+  const useful = events.filter((e) => [
+    'page_view', 'navigation', 'click', 'input', 'change', 'submit', 'download', 'error', 'success'
+  ].includes(e.type));
   const result = [];
-  for (const event of events.filter((e) => usefulTypes.has(e.type))) {
+  for (const event of useful) {
     const signature = actionSignature(event);
     const previous = result[result.length - 1];
     if (previous && previous.signature === signature && event.type === 'input') {
@@ -229,8 +226,18 @@ function workflowTitle(events, actions) {
 
 function queueOperation(state, collection, id, kind, payload) {
   const opKey = `${collection}:${id}`;
-  const op = { opKey, collection, id, kind, payload, deviceId: state.deviceId, updatedAt: nowIso() };
-  state.syncQueue = [...(state.syncQueue || []).filter((item) => item.opKey !== opKey), op].slice(-3000);
+  const op = {
+    opKey,
+    collection,
+    id,
+    kind,
+    payload,
+    deviceId: state.deviceId,
+    updatedAt: nowIso()
+  };
+  const queue = (state.syncQueue || []).filter((item) => item.opKey !== opKey);
+  queue.push(op);
+  state.syncQueue = queue.slice(-3000);
 }
 
 function mergeCountMaps(a = {}, b = {}) {
@@ -257,8 +264,7 @@ function mergeWorkflow(local, remote) {
     occurrencesByDevice,
     occurrences,
     status: approved ? 'approved' : 'observed',
-    confidence: approved
-      ? Math.max(.9, Number(local.confidence || 0), Number(remote.confidence || 0))
+    confidence: approved ? Math.max(.9, Number(local.confidence || 0), Number(remote.confidence || 0))
       : Math.min(.95, .35 + occurrences * .12)
   };
 }
@@ -266,20 +272,20 @@ function mergeWorkflow(local, remote) {
 function publicCloudStatus(state) {
   return {
     authenticated: Boolean(state.cloudAuth?.refreshToken && state.cloudAuth?.uid),
-    synced: Boolean(state.cloudStatus?.synced && state.cloudStatus?.lastSyncedAt),
+    synced: Boolean(state.cloudStatus?.synced),
     email: state.cloudAuth?.email || state.lastLoginEmail || null,
     uid: state.cloudAuth?.uid || null,
     projectId: SHADOW_AGENT_FIREBASE.projectId,
     deviceId: state.deviceId,
     deviceName: state.deviceName,
+    observing: Boolean(state.observing),
+    sessionId: state.sessionId || null,
+    sessionStartedAt: state.sessionStartedAt || null,
     lastSyncedAt: state.cloudStatus?.lastSyncedAt || null,
     lastError: state.cloudStatus?.lastError || null,
     pending: (state.syncQueue || []).length,
     deviceCount: Number(state.cloudStatus?.deviceCount || 0),
-    activeSessionCount: Number(state.cloudStatus?.activeSessionCount || 0),
-    observing: Boolean(state.observing),
-    sessionId: state.sessionId || null,
-    sessionStartedAt: state.sessionStartedAt || null
+    activeSessionCount: Number(state.cloudStatus?.activeSessionCount || 0)
   };
 }
 
@@ -427,9 +433,9 @@ function mergeRemoteData(state, remoteWorkflows, remoteCustomers) {
 async function syncNow() {
   let state = await ensureDeviceIdentity();
   if (!state.cloudAuth?.refreshToken || !state.cloudAuth?.uid) {
-    state.cloudStatus = { ...state.cloudStatus, authenticated: false, synced: false, lastError: 'Firebase account is not signed in.' };
+    state.cloudStatus = { ...state.cloudStatus, authenticated: false, synced: false, lastError: null };
     await setState({ cloudStatus: state.cloudStatus, cloudConfig: fixedCloudConfig() });
-    return { ok: false, skipped: true, error: state.cloudStatus.lastError, status: publicCloudStatus(state) };
+    return { ok: false, skipped: true, requiresSignIn: true, status: publicCloudStatus(state) };
   }
 
   try {
@@ -677,7 +683,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const state = await getState();
       const deviceName = String(message.deviceName || '').trim() || state.deviceName;
       await setState({ deviceName });
-      syncNow().catch(() => {});
+      if (state.cloudAuth?.uid) syncNow().catch(() => {});
       return sendResponse({ ok: true, deviceName });
     }
 
@@ -694,7 +700,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const approved = workflows.find((w) => w.id === message.id);
       if (approved) queueOperation(state, 'workflows', approved.id, 'workflow', approved);
       await setState({ workflows, syncQueue: state.syncQueue });
-      syncNow().catch(() => {});
+      if (state.cloudAuth?.uid) syncNow().catch(() => {});
       return sendResponse({ ok: true });
     }
 
