@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "CSPWALA Shadow Agent",
+  "version": "0.1.0",
+  "description": "Privacy-first work observer for learning CSPWALA workflows from real browser activity.",
+  "permissions": ["storage", "tabs", "downloads"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "CSPWALA Shadow Agent",
+    "default_popup": "popup.html"
+  },
+  "options_page": "dashboard.html",
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
+}
