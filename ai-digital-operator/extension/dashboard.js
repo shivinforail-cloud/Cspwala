@@ -1,3 +1,5 @@
+const FIXED_FIREBASE_CONFIG = SHADOW_AGENT_FIREBASE;
+
 async function send(type, extra = {}) {
   return chrome.runtime.sendMessage({ type, ...extra });
 }
@@ -98,12 +100,16 @@ function setInputIfIdle(id, value) {
   if (document.activeElement !== el) el.value = value || '';
 }
 
+function isStandaloneProject(state) {
+  return state.cloudConfig?.projectId === FIXED_FIREBASE_CONFIG.projectId;
+}
+
 async function render() {
   const state = await send('GET_STATE');
   const events = state.events || [];
   const workflows = state.workflows || [];
   const customers = Object.values(state.customerContexts || {}).sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
-  const cloudConnected = Boolean(state.cloudAuth?.uid && state.cloudConfig?.projectId && state.cloudConfig?.apiKey);
+  const cloudConnected = Boolean(state.cloudAuth?.uid && isStandaloneProject(state));
 
   document.getElementById('metricStatus').textContent = state.observing ? 'ON' : 'OFF';
   document.getElementById('metricEvents').textContent = events.length;
@@ -145,14 +151,20 @@ async function render() {
   cloudChip.textContent = cloudConnected ? 'ONLINE SYNC' : 'OFFLINE';
   cloudChip.className = `chip ${cloudConnected ? 'ok' : ''}`;
   document.getElementById('cloudDevice').textContent = `${state.deviceName || 'This PC'} (${state.deviceId || '-'})`;
-  document.getElementById('cloudAccount').textContent = state.cloudAuth?.email || 'Not connected';
+  document.getElementById('cloudAccount').textContent = cloudConnected ? (state.cloudAuth?.email || 'Connected') : 'Not connected';
   document.getElementById('cloudLastSync').textContent = friendlyTime(state.cloudStatus?.lastSyncedAt);
   document.getElementById('cloudPending').textContent = String((state.syncQueue || []).length);
-  document.getElementById('cloudError').textContent = state.cloudStatus?.lastError ? `Sync error: ${state.cloudStatus.lastError}` : '';
+
+  let cloudMessage = state.cloudStatus?.lastError ? `Sync error: ${state.cloudStatus.lastError}` : '';
+  if (state.cloudAuth?.uid && state.cloudConfig?.projectId && !isStandaloneProject(state)) {
+    cloudMessage = `Old Firebase connection detected (${state.cloudConfig.projectId}). Click Connect & Sync to move this PC to ${FIXED_FIREBASE_CONFIG.projectId}.`;
+  }
+  document.getElementById('cloudError').textContent = cloudMessage;
+
   setInputIfIdle('deviceName', state.deviceName || '');
-  setInputIfIdle('projectId', state.cloudConfig?.projectId || '');
-  setInputIfIdle('apiKey', state.cloudConfig?.apiKey || '');
-  setInputIfIdle('cloudEmail', state.cloudAuth?.email || '');
+  setInputIfIdle('projectId', FIXED_FIREBASE_CONFIG.projectId);
+  setInputIfIdle('apiKey', FIXED_FIREBASE_CONFIG.apiKey);
+  setInputIfIdle('cloudEmail', cloudConnected ? (state.cloudAuth?.email || '') : '');
 }
 
 document.getElementById('toggleObserver').addEventListener('click', async () => {
@@ -179,15 +191,19 @@ document.getElementById('captureScreenshots').addEventListener('change', async (
 document.getElementById('connectCloud').addEventListener('click', async () => {
   const button = document.getElementById('connectCloud');
   button.disabled = true;
-  document.getElementById('cloudError').textContent = 'Connecting...';
+  document.getElementById('cloudError').textContent = 'Connecting to standalone Firebase...';
   try {
+    const email = document.getElementById('cloudEmail').value.trim();
+    const password = document.getElementById('cloudPassword').value;
+    if (!email || !password) throw new Error('Firebase login email and password are required');
+
     const result = await send('CLOUD_CONNECT', {
       config: {
-        projectId: document.getElementById('projectId').value.trim(),
-        apiKey: document.getElementById('apiKey').value.trim()
+        projectId: FIXED_FIREBASE_CONFIG.projectId,
+        apiKey: FIXED_FIREBASE_CONFIG.apiKey
       },
-      email: document.getElementById('cloudEmail').value.trim(),
-      password: document.getElementById('cloudPassword').value,
+      email,
+      password,
       deviceName: document.getElementById('deviceName').value.trim()
     });
     document.getElementById('cloudPassword').value = '';
@@ -201,6 +217,11 @@ document.getElementById('connectCloud').addEventListener('click', async () => {
 });
 
 document.getElementById('syncNow').addEventListener('click', async () => {
+  const state = await send('GET_STATE');
+  if (!isStandaloneProject(state)) {
+    document.getElementById('cloudError').textContent = `Connect this PC to ${FIXED_FIREBASE_CONFIG.projectId} first.`;
+    return;
+  }
   const name = document.getElementById('deviceName').value.trim();
   if (name) await send('UPDATE_DEVICE_NAME', { deviceName: name });
   const result = await send('SYNC_NOW');
