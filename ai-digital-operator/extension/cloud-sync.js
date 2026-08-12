@@ -78,7 +78,7 @@ const ShadowCloud = (() => {
   }
 
   function docName(config, uid, collection, id) {
-    return `projects/${config.projectId}/databases/(default)/documents/aiOperatorUsers/${uid}/${collection}/${id}`;
+    return `projects/${config.projectId}/databases/(default)/documents/shadowAgents/${uid}/${collection}/${id}`;
   }
 
   async function commit(config, auth, uid, operations) {
@@ -109,7 +109,7 @@ const ShadowCloud = (() => {
   async function listCollection(config, auth, uid, collection, pageSize = 250) {
     const token = await ensureToken(config, auth);
     if (token.uid !== uid) throw new Error('Cloud user scope mismatch');
-    const url = `${apiBase(config.projectId)}/aiOperatorUsers/${encodeURIComponent(uid)}/${encodeURIComponent(collection)}?pageSize=${Math.min(1000, pageSize)}`;
+    const url = `${apiBase(config.projectId)}/shadowAgents/${encodeURIComponent(uid)}/${encodeURIComponent(collection)}?pageSize=${Math.min(1000, pageSize)}`;
     const response = await fetch(url, { headers: authHeaders(token.idToken) });
     const data = await response.json();
     if (!response.ok) throw new Error(data?.error?.message || `Failed to load ${collection}`);
