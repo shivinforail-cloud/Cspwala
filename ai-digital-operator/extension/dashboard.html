@@ -14,7 +14,7 @@
     .workflow,.customer{border:1px solid #e1e8ea;border-radius:14px;padding:13px;margin:9px 0;background:#fbfcfc}.workflow-top,.customer-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.workflow h3,.customer h3{margin:0 0 3px;font-size:15px}.chip{display:inline-block;border-radius:999px;padding:4px 8px;font-size:10px;font-weight:900;background:#eef2f3;color:#51616a}.chip.ok{background:#e0f5ec;color:#08704f}.chip.warn{background:#fff4dc;color:#8a5b05}.chip.bad{background:#fff0ef;color:#9c2a22}.confidence{font-size:12px;font-weight:900}.bar{height:7px;border-radius:99px;background:#e9eef0;overflow:hidden;margin-top:7px}.bar i{display:block;height:100%;background:linear-gradient(90deg,#0b6b57,#19a07c);border-radius:99px}.actions{font-size:11px;color:#667780;margin-top:8px;line-height:1.45}.workflow-buttons{display:flex;gap:6px;margin-top:10px}
     .event{display:grid;grid-template-columns:90px 90px 1fr;gap:8px;padding:9px 2px;border-bottom:1px solid #edf1f2;font-size:12px}.event:last-child{border-bottom:0}.event-type{font-weight:900}.event-url{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#5c6c74}.event-time{color:#7a878e}
     label.setting{display:flex;align-items:flex-start;gap:9px;padding:11px 0;border-bottom:1px solid #edf1f2;font-size:13px}label.setting:last-child{border:0}.empty{padding:25px;text-align:center;color:#77858b;border:1px dashed #d6e0e3;border-radius:13px}
-    .formgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.field{display:flex;flex-direction:column;gap:5px;margin-bottom:8px}.field.full{grid-column:1/-1}.field label{font-size:11px;font-weight:800;color:#52636c}.field input{width:100%;padding:10px;border:1px solid #ccd7db;border-radius:10px;font:inherit}.syncbox{padding:11px;border:1px solid #e2e8ea;border-radius:12px;background:#fafcfc;margin-bottom:10px}.syncrow{display:flex;justify-content:space-between;gap:8px;font-size:12px;margin:4px 0}.syncrow span:last-child{font-weight:800;text-align:right}.customer-fields{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:9px}.customer-field{padding:8px;border-radius:9px;background:#f1f5f5;font-size:11px;overflow:hidden}.customer-field b{display:block;color:#52626b;margin-bottom:2px}.customer-field span{word-break:break-word}.warning{padding:10px;border-radius:10px;background:#fff8e8;color:#77540c;font-size:11px;line-height:1.45}
+    .formgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.field{display:flex;flex-direction:column;gap:5px;margin-bottom:8px}.field.full{grid-column:1/-1}.field label{font-size:11px;font-weight:800;color:#52636c}.field input{width:100%;padding:10px;border:1px solid #ccd7db;border-radius:10px;font:inherit}.field input[readonly]{background:#eef4f3;color:#3e5f58;font-weight:700}.syncbox{padding:11px;border:1px solid #e2e8ea;border-radius:12px;background:#fafcfc;margin-bottom:10px}.syncrow{display:flex;justify-content:space-between;gap:8px;font-size:12px;margin:4px 0}.syncrow span:last-child{font-weight:800;text-align:right}.customer-fields{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:9px}.customer-field{padding:8px;border-radius:9px;background:#f1f5f5;font-size:11px;overflow:hidden}.customer-field b{display:block;color:#52626b;margin-bottom:2px}.customer-field span{word-break:break-word}.warning{padding:10px;border-radius:10px;background:#fff8e8;color:#77540c;font-size:11px;line-height:1.45}
     @media(max-width:1050px){.metrics{grid-template-columns:repeat(3,1fr)}}@media(max-width:850px){.layout{grid-template-columns:1fr}.wrap{padding:12px}}@media(max-width:520px){.metrics{grid-template-columns:1fr 1fr}.formgrid,.customer-fields{grid-template-columns:1fr}.event{grid-template-columns:70px 1fr}.event-url{grid-column:1/-1}}
   </style>
 </head>
@@ -56,17 +56,19 @@
         <div id="cloudSummary" class="syncbox">
           <div class="syncrow"><span>Device</span><span id="cloudDevice">-</span></div>
           <div class="syncrow"><span>Account</span><span id="cloudAccount">Not connected</span></div>
+          <div class="syncrow"><span>Firebase</span><span>quick-response-h7ttf</span></div>
           <div class="syncrow"><span>Last sync</span><span id="cloudLastSync">Never</span></div>
           <div class="syncrow"><span>Pending</span><span id="cloudPending">0</span></div>
         </div>
         <div class="formgrid">
           <div class="field full"><label>PC / Device Name</label><input id="deviceName" placeholder="Shop PC 1"></div>
-          <div class="field full"><label>Firebase Project ID</label><input id="projectId" placeholder="your-project-id"></div>
-          <div class="field full"><label>Firebase Web API Key</label><input id="apiKey" placeholder="AIza..."></div>
-          <div class="field full"><label>CSPWALA / Firebase Login Email</label><input id="cloudEmail" type="email" placeholder="name@example.com"></div>
+          <div class="field full"><label>Standalone Firebase Project ID</label><input id="projectId" readonly></div>
+          <div class="field full"><label>Firebase Web API Key</label><input id="apiKey" readonly></div>
+          <div class="field full"><label>Firebase Login Email</label><input id="cloudEmail" type="email" placeholder="name@example.com"></div>
           <div class="field full"><label>Password (used only to sign in, not stored)</label><input id="cloudPassword" type="password" autocomplete="off" placeholder="••••••••"></div>
         </div>
         <div class="row"><button id="connectCloud" class="primary">Connect & Sync</button><button id="syncNow" class="ghost">Sync Now</button><button id="disconnectCloud" class="danger">Disconnect</button></div>
+        <p class="note">This build is locked to the standalone Shadow Agent Firebase project. Existing CSPWALA Tools/Community Firebase projects are not used.</p>
         <p id="cloudError" class="note"></p>
       </section>
 
@@ -86,6 +88,7 @@
     </aside>
   </div>
 </div>
+<script src="standalone-config.js"></script>
 <script src="dashboard.js"></script>
 </body>
 </html>
