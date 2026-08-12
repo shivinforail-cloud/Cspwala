@@ -95,82 +95,133 @@ function friendlyTime(iso) {
   try { return new Date(iso).toLocaleString(); } catch { return iso; }
 }
 
-function setInputIfIdle(id, value) {
-  const el = document.getElementById(id);
-  if (document.activeElement !== el) el.value = value || '';
+function shortId(value) {
+  if (!value) return 'None';
+  const text = String(value);
+  return text.length > 24 ? `${text.slice(0, 12)}…${text.slice(-8)}` : text;
 }
 
-function isStandaloneProject(state) {
-  return state.cloudConfig?.projectId === FIXED_FIREBASE_CONFIG.projectId;
+function setInputIfIdle(id, value) {
+  const el = document.getElementById(id);
+  if (el && document.activeElement !== el) el.value = value || '';
+}
+
+function setStatusMessage(text, mode = 'warn') {
+  const el = document.getElementById('cloudError');
+  el.textContent = text;
+  el.className = `statusmsg ${mode}`;
 }
 
 async function render() {
-  const state = await send('GET_STATE');
+  let state;
+  try {
+    state = await send('GET_STATE');
+  } catch (error) {
+    setStatusMessage(`Extension background error: ${error?.message || error}`, 'bad');
+    return;
+  }
+
   const events = state.events || [];
   const workflows = state.workflows || [];
   const customers = Object.values(state.customerContexts || {}).sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
-  const cloudConnected = Boolean(state.cloudAuth?.uid && isStandaloneProject(state));
+  const authenticated = Boolean(state.cloudAuth?.uid);
+  const synced = Boolean(authenticated && state.cloudStatus?.synced && state.cloudStatus?.lastSyncedAt && !state.cloudStatus?.lastError);
+  const activeSessions = Number(state.cloudStatus?.activeSessionCount || (state.observing ? 1 : 0));
+  const syncedPcs = Number(state.cloudStatus?.deviceCount || (authenticated ? 1 : 0));
 
   document.getElementById('metricStatus').textContent = state.observing ? 'ON' : 'OFF';
   document.getElementById('metricEvents').textContent = events.length;
   document.getElementById('metricWorkflows').textContent = workflows.length;
   document.getElementById('metricCustomers').textContent = customers.length;
-  document.getElementById('metricCloud').textContent = cloudConnected ? 'ON' : 'OFF';
-  document.getElementById('metricDevices').textContent = Math.max(1, Number(state.cloudStatus?.deviceCount || 0));
+  document.getElementById('metricCloud').textContent = synced ? 'ON' : (authenticated ? 'AUTH' : 'OFF');
+  document.getElementById('metricDevices').textContent = `${activeSessions} / ${syncedPcs}`;
 
   const statusChip = document.getElementById('statusChip');
-  statusChip.textContent = state.observing ? 'OBSERVING' : 'OFF';
+  statusChip.textContent = state.observing ? 'ACTIVE' : 'OFF';
   statusChip.className = `chip ${state.observing ? 'ok' : ''}`;
   const toggle = document.getElementById('toggleObserver');
-  toggle.textContent = state.observing ? 'Stop & Learn Session' : 'Start Observing';
+  toggle.textContent = state.observing ? 'Stop Observing & Learn' : 'Start Observing';
   toggle.className = state.observing ? 'danger' : 'primary';
-  document.getElementById('sessionInfo').textContent = state.sessionStartedAt
-    ? `Session started: ${new Date(state.sessionStartedAt).toLocaleString()}`
-    : 'No active observation session.';
+
+  const sessionInfo = document.getElementById('sessionInfo');
+  if (state.observing && state.sessionId) {
+    sessionInfo.textContent = `🟢 Active session • ${shortId(state.sessionId)} • Started ${friendlyTime(state.sessionStartedAt)}`;
+    sessionInfo.className = 'statusmsg ok';
+  } else {
+    sessionInfo.textContent = 'No active observation session.';
+    sessionInfo.className = 'statusmsg warn';
+  }
 
   document.getElementById('captureCustomerDetails').checked = state.settings?.captureCustomerDetails !== false;
   document.getElementById('maskCustomerDetails').checked = state.settings?.maskCustomerDetailsInDashboard !== false;
   document.getElementById('captureScreenshots').checked = Boolean(state.settings?.captureScreenshots);
 
-  const workflowsEl = document.getElementById('workflows');
-  workflowsEl.innerHTML = workflows.length
+  document.getElementById('workflows').innerHTML = workflows.length
     ? workflows.map(workflowCard).join('')
-    : '<div class="empty">अजून workflow शिकलेला नाही. Observer सुरू करून नेहमीप्रमाणे काम करा.</div>';
+    : '<div class="empty">अजून workflow शिकलेला नाही. Observer ACTIVE करून दुसऱ्या website/tab वर नेहमीप्रमाणे काम करा.</div>';
 
-  const customersEl = document.getElementById('customers');
   const recentCustomers = customers.slice(0, 30);
-  customersEl.innerHTML = recentCustomers.length
+  document.getElementById('customers').innerHTML = recentCustomers.length
     ? recentCustomers.map((c) => customerCard(c, state.settings?.maskCustomerDetailsInDashboard !== false)).join('')
     : '<div class="empty">Customer context अजून capture झालेला नाही.</div>';
 
-  const eventsEl = document.getElementById('events');
   const recent = [...events].slice(-80).reverse();
-  eventsEl.innerHTML = recent.length ? recent.map(eventRow).join('') : '<div class="empty">No activity captured yet.</div>';
+  document.getElementById('events').innerHTML = recent.length
+    ? recent.map(eventRow).join('')
+    : '<div class="empty">No activity captured yet. Dashboard tab itself is not counted; work on normal web pages is observed.</div>';
 
   const cloudChip = document.getElementById('cloudChip');
-  cloudChip.textContent = cloudConnected ? 'ONLINE SYNC' : 'OFFLINE';
-  cloudChip.className = `chip ${cloudConnected ? 'ok' : ''}`;
-  document.getElementById('cloudDevice').textContent = `${state.deviceName || 'This PC'} (${state.deviceId || '-'})`;
-  document.getElementById('cloudAccount').textContent = cloudConnected ? (state.cloudAuth?.email || 'Connected') : 'Not connected';
+  if (synced) {
+    cloudChip.textContent = 'ONLINE SYNC';
+    cloudChip.className = 'chip ok';
+  } else if (authenticated) {
+    cloudChip.textContent = 'AUTHENTICATED';
+    cloudChip.className = 'chip warn';
+  } else {
+    cloudChip.textContent = 'NOT SIGNED IN';
+    cloudChip.className = 'chip bad';
+  }
+
+  document.getElementById('cloudDevice').textContent = `${state.deviceName || 'This PC'} (${shortId(state.deviceId)})`;
+  document.getElementById('cloudAccount').textContent = state.cloudAuth?.email || state.lastLoginEmail || 'Not signed in';
+  document.getElementById('cloudAuthState').textContent = authenticated ? 'YES' : 'NO';
+  document.getElementById('cloudSyncState').textContent = synced ? 'YES' : 'NO';
+  document.getElementById('cloudActiveSessions').textContent = String(activeSessions);
+  document.getElementById('cloudSession').textContent = state.observing ? shortId(state.sessionId) : 'None';
   document.getElementById('cloudLastSync').textContent = friendlyTime(state.cloudStatus?.lastSyncedAt);
   document.getElementById('cloudPending').textContent = String((state.syncQueue || []).length);
-
-  let cloudMessage = state.cloudStatus?.lastError ? `Sync error: ${state.cloudStatus.lastError}` : '';
-  if (state.cloudAuth?.uid && state.cloudConfig?.projectId && !isStandaloneProject(state)) {
-    cloudMessage = `Old Firebase connection detected (${state.cloudConfig.projectId}). Click Connect & Sync to move this PC to ${FIXED_FIREBASE_CONFIG.projectId}.`;
-  }
-  document.getElementById('cloudError').textContent = cloudMessage;
 
   setInputIfIdle('deviceName', state.deviceName || '');
   setInputIfIdle('projectId', FIXED_FIREBASE_CONFIG.projectId);
   setInputIfIdle('apiKey', FIXED_FIREBASE_CONFIG.apiKey);
-  setInputIfIdle('cloudEmail', cloudConnected ? (state.cloudAuth?.email || '') : '');
+  setInputIfIdle('cloudEmail', state.cloudAuth?.email || state.lastLoginEmail || '');
+
+  if (state.cloudStatus?.lastError) {
+    setStatusMessage(`Sync error: ${state.cloudStatus.lastError}`, 'bad');
+  } else if (synced && state.observing) {
+    setStatusMessage(`✅ Signed in, Firestore synced and session ACTIVE. Last sync: ${friendlyTime(state.cloudStatus.lastSyncedAt)}`, 'ok');
+  } else if (synced) {
+    setStatusMessage('✅ Firebase sign-in and Firestore sync successful. Observer is currently OFF.', 'ok');
+  } else if (authenticated) {
+    setStatusMessage('Firebase Authentication successful, but Firestore sync has not completed yet. Click Sync Now.', 'warn');
+  } else {
+    setStatusMessage('Firebase account sign-in बाकी आहे. Email + password देऊन Connect, Sync & Start दाबा.', 'warn');
+  }
 }
 
 document.getElementById('toggleObserver').addEventListener('click', async () => {
-  const state = await send('GET_STATE');
-  await send(state.observing ? 'STOP_OBSERVING' : 'START_OBSERVING');
-  await render();
+  const button = document.getElementById('toggleObserver');
+  button.disabled = true;
+  try {
+    const state = await send('GET_STATE');
+    const result = await send(state.observing ? 'STOP_OBSERVING' : 'START_OBSERVING');
+    if (!result?.ok) throw new Error(result?.error || 'Observer state update failed');
+  } catch (error) {
+    setStatusMessage(`Observer error: ${error?.message || error}`, 'bad');
+  } finally {
+    button.disabled = false;
+    await render();
+  }
 });
 
 document.getElementById('captureCustomerDetails').addEventListener('change', async (event) => {
@@ -191,25 +242,25 @@ document.getElementById('captureScreenshots').addEventListener('change', async (
 document.getElementById('connectCloud').addEventListener('click', async () => {
   const button = document.getElementById('connectCloud');
   button.disabled = true;
-  document.getElementById('cloudError').textContent = 'Connecting to standalone Firebase...';
+  setStatusMessage('Connecting to Firebase Authentication...', 'warn');
   try {
     const email = document.getElementById('cloudEmail').value.trim();
     const password = document.getElementById('cloudPassword').value;
-    if (!email || !password) throw new Error('Firebase login email and password are required');
+    if (!email) throw new Error('Firebase Login Email टाका. Project ID दिसणे म्हणजे account connected झालेले नाही.');
+    if (!password) throw new Error('Firebase Authentication password टाका.');
 
     const result = await send('CLOUD_CONNECT', {
-      config: {
-        projectId: FIXED_FIREBASE_CONFIG.projectId,
-        apiKey: FIXED_FIREBASE_CONFIG.apiKey
-      },
       email,
       password,
       deviceName: document.getElementById('deviceName').value.trim()
     });
     document.getElementById('cloudPassword').value = '';
-    if (!result?.ok) throw new Error(result?.error || 'Cloud sync connection failed');
+    if (!result?.ok) throw new Error(result?.error || 'Firebase connection failed');
+    setStatusMessage(result.observerStarted
+      ? '✅ Firebase connected, Firestore synced आणि Observer automatically ACTIVE झाला.'
+      : '✅ Firebase connected and Firestore synced.', 'ok');
   } catch (error) {
-    document.getElementById('cloudError').textContent = error?.message || String(error);
+    setStatusMessage(`Connection error: ${error?.message || error}`, 'bad');
   } finally {
     button.disabled = false;
     await render();
@@ -217,16 +268,18 @@ document.getElementById('connectCloud').addEventListener('click', async () => {
 });
 
 document.getElementById('syncNow').addEventListener('click', async () => {
-  const state = await send('GET_STATE');
-  if (!isStandaloneProject(state)) {
-    document.getElementById('cloudError').textContent = `Connect this PC to ${FIXED_FIREBASE_CONFIG.projectId} first.`;
-    return;
+  setStatusMessage('Syncing with Firestore...', 'warn');
+  try {
+    const name = document.getElementById('deviceName').value.trim();
+    if (name) await send('UPDATE_DEVICE_NAME', { deviceName: name });
+    const result = await send('SYNC_NOW');
+    if (!result?.ok) throw new Error(result?.error || 'Sync failed');
+    setStatusMessage('✅ Firestore sync completed.', 'ok');
+  } catch (error) {
+    setStatusMessage(`Sync error: ${error?.message || error}`, 'bad');
+  } finally {
+    await render();
   }
-  const name = document.getElementById('deviceName').value.trim();
-  if (name) await send('UPDATE_DEVICE_NAME', { deviceName: name });
-  const result = await send('SYNC_NOW');
-  if (!result?.ok && !result?.skipped) document.getElementById('cloudError').textContent = result?.error || 'Sync failed';
-  await render();
 });
 
 document.getElementById('disconnectCloud').addEventListener('click', async () => {
@@ -259,7 +312,7 @@ document.getElementById('exportJson').addEventListener('click', async () => {
   const payload = {
     exportedAt: new Date().toISOString(),
     product: 'CSPWALA Shadow Agent',
-    version: '0.2.0',
+    version: '0.2.2',
     deviceId: state.deviceId,
     deviceName: state.deviceName,
     settings: state.settings,
@@ -278,5 +331,5 @@ document.getElementById('exportJson').addEventListener('click', async () => {
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 });
 
-render().catch(console.error);
-setInterval(() => render().catch(() => {}), 5000);
+render().catch((error) => setStatusMessage(`Dashboard error: ${error?.message || error}`, 'bad'));
+setInterval(() => render().catch(() => {}), 4000);
