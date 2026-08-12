@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="mr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CSPWALA Shadow Agent</title>
+  <style>
+    body{margin:0;width:350px;font-family:Inter,system-ui,-apple-system,"Noto Sans Devanagari",sans-serif;background:#f5f7f8;color:#14202a}
+    .top{padding:18px;background:linear-gradient(135deg,#0b3a32,#08705b);color:#fff}.eyebrow{font-size:10px;font-weight:800;letter-spacing:.12em;opacity:.8}.top h1{font-size:19px;margin:4px 0 3px}.top p{margin:0;font-size:12px;opacity:.82}
+    main{padding:14px}.card{background:#fff;border:1px solid #dde5e8;border-radius:15px;padding:13px;margin-bottom:10px;box-shadow:0 6px 18px rgba(15,39,64,.05)}
+    .row{display:flex;align-items:center;justify-content:space-between;gap:10px}.status{font-weight:800}.dot{width:10px;height:10px;border-radius:50%;background:#a0a9af;display:inline-block;margin-right:7px}.dot.on{background:#0a9b69;box-shadow:0 0 0 4px #e0f5ed}
+    button{width:100%;border:0;border-radius:11px;padding:11px 12px;font-weight:800;cursor:pointer}.start{background:#0b6b57;color:#fff}.stop{background:#a72a22;color:#fff}.ghost{background:#eef3f4;color:#27424c;margin-top:8px}
+    .metric{font-size:20px;font-weight:900}.label{font-size:10px;color:#687782}.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.mini{border:1px solid #e1e7e9;border-radius:12px;padding:10px;background:#fbfcfc}
+    .safe{font-size:11px;line-height:1.45;color:#54666f}.safe strong{color:#23434b}.cloud{font-size:11px;margin-top:8px;padding:9px;border-radius:10px;background:#f0f5f4}.cloud b{display:block;margin-bottom:2px}footer{padding:0 14px 14px;font-size:10px;color:#7b888e;text-align:center}
+  </style>
+</head>
+<body>
+  <header class="top"><div class="eyebrow">CSPWALA.IN • AI DIGITAL OPERATOR</div><h1>Shadow Agent</h1><p>काम observe करा → customer context शिका → workflow sync करा</p></header>
+  <main>
+    <section class="card">
+      <div class="row"><div><div class="status"><span id="dot" class="dot"></span><span id="statusText">Checking...</span></div><div id="sessionText" class="label">No active session</div></div></div>
+      <button id="toggleBtn" class="start">Start Observing</button>
+      <button id="dashboardBtn" class="ghost">Open Learning Dashboard</button>
+      <div id="cloudBox" class="cloud"><b id="cloudText">☁ Cloud Sync: checking...</b><span id="deviceText"></span></div>
+    </section>
+    <section class="grid">
+      <div class="mini"><div id="eventCount" class="metric">0</div><div class="label">Local actions</div></div>
+      <div class="mini"><div id="workflowCount" class="metric">0</div><div class="label">Workflows</div></div>
+      <div class="mini"><div id="customerCount" class="metric">0</div><div class="label">Customer contexts</div></div>
+      <div class="mini"><div id="deviceCount" class="metric">1</div><div class="label">Synced PCs</div></div>
+    </section>
+    <section class="card safe"><strong>Customer reasoning:</strong> Name/DOB/address/Aadhaar/PAN/account-related form data can be saved when enabled. <strong>Password, OTP, CVV, UPI/ATM/transaction PIN and biometric values are never stored.</strong> Screenshots stay local.</section>
+  </main>
+  <footer>v0.2 • Multi-PC learning • Human approval before trusted automation</footer>
+  <script src="popup.js"></script>
+</body>
+</html>

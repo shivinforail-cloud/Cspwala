@@ -1,0 +1,32 @@
+name: Shadow Agent Check
+
+on:
+  push:
+    paths:
+      - 'ai-digital-operator/**'
+      - '.github/workflows/shadow-agent-check.yml'
+  pull_request:
+    paths:
+      - 'ai-digital-operator/**'
+      - '.github/workflows/shadow-agent-check.yml'
+
+jobs:
+  validate-extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate manifest JSON
+        run: node -e "JSON.parse(require('fs').readFileSync('ai-digital-operator/extension/manifest.json','utf8')); console.log('manifest ok')"
+      - name: Check service worker
+        run: node --check ai-digital-operator/extension/background.js
+      - name: Check cloud sync
+        run: node --check ai-digital-operator/extension/cloud-sync.js
+      - name: Check content script
+        run: node --check ai-digital-operator/extension/content.js
+      - name: Check dashboard
+        run: node --check ai-digital-operator/extension/dashboard.js
+      - name: Check popup
+        run: node --check ai-digital-operator/extension/popup.js

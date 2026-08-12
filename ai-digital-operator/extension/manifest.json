@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "CSPWALA Shadow Agent",
+  "version": "0.2.3",
+  "description": "Standalone multi-device work observer with Firebase sync, active-session heartbeat, and persistent login email UX.",
+  "permissions": ["storage", "tabs", "downloads", "alarms"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "CSPWALA Shadow Agent",
+    "default_popup": "popup.html"
+  },
+  "options_page": "dashboard.html",
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
+}
