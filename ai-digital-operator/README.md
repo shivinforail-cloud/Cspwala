@@ -1,16 +1,17 @@
 # CSPWALA AI Digital Operator — Phase 1 MVP
 
-This module starts the **Shadow Learning Agent**: a privacy-first Chrome extension that observes browser work, records action structure, and turns a completed observation session into a reusable workflow candidate.
+This module starts the **Shadow Learning Agent**: a privacy-first Chrome extension that observes browser work, records action structure, and turns real work into reusable workflow candidates.
 
 ## What works now
 
-- Start/stop day-work observation from the extension popup.
+- Start/stop all-day observation from the extension popup.
 - Capture page views, navigation, clicks, form inputs/changes, submits, and common success/error messages.
+- **Automatic task segmentation:** when a success message is detected, or when work resumes after roughly 10 minutes of inactivity, the previous task is learned separately while the observer can remain ON all day.
 - Store data locally in `chrome.storage.local`.
 - Do **not** store typed customer values in Phase 1. Input values are replaced with markers such as `[VALUE_ENTERED]`, `[OPTION_SELECTED]`, or `[2 file(s)]`.
 - Additional redaction guard for password/OTP/Aadhaar/PAN/account-like fields.
 - Screenshot capture is OFF by default. If explicitly enabled, it is attempted only for submit/error events.
-- Build a workflow candidate when a session is stopped.
+- Build workflow candidates from completed task segments.
 - Match identical observed workflows and increase occurrence count/confidence.
 - Require manual approval before a workflow is considered trusted.
 - Dashboard for recent activity, learned workflows, approval/delete, settings, and JSON export.
@@ -23,16 +24,16 @@ This module starts the **Shadow Learning Agent**: a privacy-first Chrome extensi
 4. Click **Load unpacked**.
 5. Select the `ai-digital-operator/extension` folder.
 6. Pin **CSPWALA Shadow Agent**.
-7. Click **Start Observing**, do one complete browser-based service, then click **Stop & Learn Session**.
-8. Open **Learning Dashboard** to review the captured actions and workflow.
+7. Click **Start Observing** and continue normal browser work. Successful tasks can be learned automatically; stopping observation also learns the current unfinished segment when enough actions exist.
+8. Open **Learning Dashboard** to review captured actions and workflows.
 
 ## Important behavior
 
 Phase 1 is an observer/learner, not an autonomous form submitter. It intentionally does not automate OTP, CAPTCHA, biometric, payment, declarations, or final legally significant submissions.
 
-The observation rule is:
+The learning rule is:
 
-`Observed once → candidate workflow → repeated observations increase confidence → human approval → trusted workflow`
+`Observed task → workflow candidate → repeated observations increase confidence → human approval → trusted workflow`
 
 A wrong click therefore does not immediately become a permanent automation rule.
 
