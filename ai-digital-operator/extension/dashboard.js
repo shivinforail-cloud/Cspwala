@@ -22,8 +22,7 @@ function shortUrl(url) {
 }
 
 function actionLabel(action) {
-  const pieces = [action.type, action.label || action.text || action.selector, shortUrl(action.url)].filter(Boolean);
-  return pieces.join(' • ');
+  return [action.type, action.label || action.text || action.selector, shortUrl(action.url)].filter(Boolean).join(' • ');
 }
 
 function workflowCard(workflow) {
@@ -31,6 +30,7 @@ function workflowCard(workflow) {
   const confidence = pct(workflow.confidence);
   const preview = (workflow.actions || []).slice(0, 5).map((a) => esc(actionLabel(a))).join('<br>');
   const more = Math.max(0, (workflow.actions || []).length - 5);
+  const deviceCount = Object.keys(workflow.occurrencesByDevice || {}).length || 1;
   return `
     <article class="workflow" data-workflow-id="${esc(workflow.id)}">
       <div class="workflow-top">
@@ -38,6 +38,7 @@ function workflowCard(workflow) {
           <h3>${esc(workflow.name || workflow.host || 'Observed workflow')}</h3>
           <span class="chip ${approved ? 'ok' : 'warn'}">${approved ? 'APPROVED' : 'OBSERVED'}</span>
           <span class="chip">Seen ${Number(workflow.occurrences || 1)}×</span>
+          <span class="chip">${deviceCount} PC</span>
         </div>
         <div class="confidence">${confidence}% confidence</div>
       </div>
@@ -45,8 +46,34 @@ function workflowCard(workflow) {
       <div class="actions">${preview || 'No action preview'}${more ? `<br>+ ${more} more actions` : ''}</div>
       <div class="workflow-buttons">
         ${approved ? '' : `<button class="approve" data-action="approve" data-id="${esc(workflow.id)}">Approve workflow</button>`}
-        <button class="danger" data-action="delete" data-id="${esc(workflow.id)}">Delete</button>
+        <button class="danger" data-action="delete" data-id="${esc(workflow.id)}">Delete local copy</button>
       </div>
+    </article>`;
+}
+
+function maskValue(value) {
+  const text = String(value ?? '');
+  if (!text || text.startsWith('[')) return text;
+  if (text.length <= 3) return '•••';
+  if (text.length <= 6) return `${text[0]}••${text[text.length - 1]}`;
+  return `${text.slice(0, 1)}••••${text.slice(-2)}`;
+}
+
+function customerCard(context, maskDetails) {
+  const fields = Object.values(context.fields || {}).slice(0, 12);
+  const fieldHtml = fields.map((field) => {
+    const shown = maskDetails ? maskValue(field.value) : field.value;
+    return `<div class="customer-field"><b>${esc(field.label || field.name || 'Field')}${field.sensitive ? ' 🔒' : ''}</b><span>${esc(shown)}</span></div>`;
+  }).join('');
+  const sites = (context.websites || []).slice(0, 4).map(esc).join(', ');
+  return `
+    <article class="customer">
+      <div class="customer-top">
+        <div><h3>${esc(context.displayName || 'Customer context')}</h3><span class="chip ${context.status === 'completed' ? 'ok' : 'warn'}">${esc((context.status || 'active').toUpperCase())}</span> <span class="chip">${fields.length} fields</span></div>
+        <span class="chip">${esc(context.deviceId || '')}</span>
+      </div>
+      <div class="actions">${sites ? `Sites: ${sites}` : ''}</div>
+      <div class="customer-fields">${fieldHtml || '<span class="note">No captured customer fields.</span>'}</div>
     </article>`;
 }
 
@@ -56,21 +83,34 @@ function eventRow(event) {
   return `
     <div class="event">
       <div class="event-time">${esc(time)}</div>
-      <div class="event-type">${esc(event.type || '')}${event.sensitive ? ' 🔒' : ''}</div>
+      <div class="event-type">${esc(event.type || '')}${event.sensitive ? ' 🔒' : ''}${event.secret ? ' ⛔' : ''}</div>
       <div><div>${esc(detail)}</div><div class="event-url">${esc(shortUrl(event.url))}</div></div>
     </div>`;
+}
+
+function friendlyTime(iso) {
+  if (!iso) return 'Never';
+  try { return new Date(iso).toLocaleString(); } catch { return iso; }
+}
+
+function setInputIfIdle(id, value) {
+  const el = document.getElementById(id);
+  if (document.activeElement !== el) el.value = value || '';
 }
 
 async function render() {
   const state = await send('GET_STATE');
   const events = state.events || [];
   const workflows = state.workflows || [];
-  const approved = workflows.filter((w) => w.status === 'approved').length;
+  const customers = Object.values(state.customerContexts || {}).sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+  const cloudConnected = Boolean(state.cloudAuth?.uid && state.cloudConfig?.projectId && state.cloudConfig?.apiKey);
 
   document.getElementById('metricStatus').textContent = state.observing ? 'ON' : 'OFF';
   document.getElementById('metricEvents').textContent = events.length;
   document.getElementById('metricWorkflows').textContent = workflows.length;
-  document.getElementById('metricApproved').textContent = approved;
+  document.getElementById('metricCustomers').textContent = customers.length;
+  document.getElementById('metricCloud').textContent = cloudConnected ? 'ON' : 'OFF';
+  document.getElementById('metricDevices').textContent = Math.max(1, Number(state.cloudStatus?.deviceCount || 0));
 
   const statusChip = document.getElementById('statusChip');
   statusChip.textContent = state.observing ? 'OBSERVING' : 'OFF';
@@ -78,25 +118,41 @@ async function render() {
   const toggle = document.getElementById('toggleObserver');
   toggle.textContent = state.observing ? 'Stop & Learn Session' : 'Start Observing';
   toggle.className = state.observing ? 'danger' : 'primary';
-  if (state.sessionStartedAt) {
-    document.getElementById('sessionInfo').textContent = `Session started: ${new Date(state.sessionStartedAt).toLocaleString()}`;
-  } else {
-    document.getElementById('sessionInfo').textContent = 'No active observation session.';
-  }
+  document.getElementById('sessionInfo').textContent = state.sessionStartedAt
+    ? `Session started: ${new Date(state.sessionStartedAt).toLocaleString()}`
+    : 'No active observation session.';
 
-  document.getElementById('redactSensitive').checked = state.settings?.redactSensitiveValues !== false;
+  document.getElementById('captureCustomerDetails').checked = state.settings?.captureCustomerDetails !== false;
+  document.getElementById('maskCustomerDetails').checked = state.settings?.maskCustomerDetailsInDashboard !== false;
   document.getElementById('captureScreenshots').checked = Boolean(state.settings?.captureScreenshots);
 
   const workflowsEl = document.getElementById('workflows');
   workflowsEl.innerHTML = workflows.length
     ? workflows.map(workflowCard).join('')
-    : '<div class="empty">अजून workflow शिकलेला नाही. Observer सुरू करून एक complete काम करा आणि Stop & Learn दाबा.</div>';
+    : '<div class="empty">अजून workflow शिकलेला नाही. Observer सुरू करून नेहमीप्रमाणे काम करा.</div>';
+
+  const customersEl = document.getElementById('customers');
+  const recentCustomers = customers.slice(0, 30);
+  customersEl.innerHTML = recentCustomers.length
+    ? recentCustomers.map((c) => customerCard(c, state.settings?.maskCustomerDetailsInDashboard !== false)).join('')
+    : '<div class="empty">Customer context अजून capture झालेला नाही.</div>';
 
   const eventsEl = document.getElementById('events');
   const recent = [...events].slice(-80).reverse();
-  eventsEl.innerHTML = recent.length
-    ? recent.map(eventRow).join('')
-    : '<div class="empty">No activity captured yet.</div>';
+  eventsEl.innerHTML = recent.length ? recent.map(eventRow).join('') : '<div class="empty">No activity captured yet.</div>';
+
+  const cloudChip = document.getElementById('cloudChip');
+  cloudChip.textContent = cloudConnected ? 'ONLINE SYNC' : 'OFFLINE';
+  cloudChip.className = `chip ${cloudConnected ? 'ok' : ''}`;
+  document.getElementById('cloudDevice').textContent = `${state.deviceName || 'This PC'} (${state.deviceId || '-'})`;
+  document.getElementById('cloudAccount').textContent = state.cloudAuth?.email || 'Not connected';
+  document.getElementById('cloudLastSync').textContent = friendlyTime(state.cloudStatus?.lastSyncedAt);
+  document.getElementById('cloudPending').textContent = String((state.syncQueue || []).length);
+  document.getElementById('cloudError').textContent = state.cloudStatus?.lastError ? `Sync error: ${state.cloudStatus.lastError}` : '';
+  setInputIfIdle('deviceName', state.deviceName || '');
+  setInputIfIdle('projectId', state.cloudConfig?.projectId || '');
+  setInputIfIdle('apiKey', state.cloudConfig?.apiKey || '');
+  setInputIfIdle('cloudEmail', state.cloudAuth?.email || '');
 }
 
 document.getElementById('toggleObserver').addEventListener('click', async () => {
@@ -105,8 +161,13 @@ document.getElementById('toggleObserver').addEventListener('click', async () => 
   await render();
 });
 
-document.getElementById('redactSensitive').addEventListener('change', async (event) => {
-  await send('UPDATE_SETTINGS', { settings: { redactSensitiveValues: event.target.checked } });
+document.getElementById('captureCustomerDetails').addEventListener('change', async (event) => {
+  await send('UPDATE_SETTINGS', { settings: { captureCustomerDetails: event.target.checked } });
+  await render();
+});
+
+document.getElementById('maskCustomerDetails').addEventListener('change', async (event) => {
+  await send('UPDATE_SETTINGS', { settings: { maskCustomerDetailsInDashboard: event.target.checked } });
   await render();
 });
 
@@ -115,8 +176,46 @@ document.getElementById('captureScreenshots').addEventListener('change', async (
   await render();
 });
 
+document.getElementById('connectCloud').addEventListener('click', async () => {
+  const button = document.getElementById('connectCloud');
+  button.disabled = true;
+  document.getElementById('cloudError').textContent = 'Connecting...';
+  try {
+    const result = await send('CLOUD_CONNECT', {
+      config: {
+        projectId: document.getElementById('projectId').value.trim(),
+        apiKey: document.getElementById('apiKey').value.trim()
+      },
+      email: document.getElementById('cloudEmail').value.trim(),
+      password: document.getElementById('cloudPassword').value,
+      deviceName: document.getElementById('deviceName').value.trim()
+    });
+    document.getElementById('cloudPassword').value = '';
+    if (!result?.ok) throw new Error(result?.error || 'Cloud sync connection failed');
+  } catch (error) {
+    document.getElementById('cloudError').textContent = error?.message || String(error);
+  } finally {
+    button.disabled = false;
+    await render();
+  }
+});
+
+document.getElementById('syncNow').addEventListener('click', async () => {
+  const name = document.getElementById('deviceName').value.trim();
+  if (name) await send('UPDATE_DEVICE_NAME', { deviceName: name });
+  const result = await send('SYNC_NOW');
+  if (!result?.ok && !result?.skipped) document.getElementById('cloudError').textContent = result?.error || 'Sync failed';
+  await render();
+});
+
+document.getElementById('disconnectCloud').addEventListener('click', async () => {
+  await send('CLOUD_DISCONNECT');
+  document.getElementById('cloudPassword').value = '';
+  await render();
+});
+
 document.getElementById('clearActivity').addEventListener('click', async () => {
-  if (!confirm('Captured activity clear करायची आहे? Learned workflows delete होणार नाहीत.')) return;
+  if (!confirm('Local captured activity clear करायची आहे? Cloud workflows/customer contexts delete होणार नाहीत.')) return;
   await send('CLEAR_ACTIVITY');
   await render();
 });
@@ -128,7 +227,7 @@ document.getElementById('workflows').addEventListener('click', async (event) => 
   if (button.dataset.action === 'approve') {
     await send('APPROVE_WORKFLOW', { id });
   } else if (button.dataset.action === 'delete') {
-    if (!confirm('हा learned workflow delete करायचा आहे?')) return;
+    if (!confirm('हा workflow फक्त या PC च्या local list मधून remove करायचा आहे?')) return;
     await send('DELETE_WORKFLOW', { id });
   }
   await render();
@@ -139,9 +238,12 @@ document.getElementById('exportJson').addEventListener('click', async () => {
   const payload = {
     exportedAt: new Date().toISOString(),
     product: 'CSPWALA Shadow Agent',
-    version: '0.1.0',
+    version: '0.2.0',
+    deviceId: state.deviceId,
+    deviceName: state.deviceName,
     settings: state.settings,
     workflows: state.workflows || [],
+    customerContexts: state.customerContexts || {},
     events: state.events || []
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
